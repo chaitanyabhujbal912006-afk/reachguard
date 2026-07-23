@@ -24,7 +24,7 @@ from reachguard_core.reachability import (
     check_reachability_details,
     is_reachable,
 )
-import main as m
+import reachguard_core.cli as m
 
 failures = []
 

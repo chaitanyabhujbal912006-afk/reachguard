@@ -20,29 +20,60 @@ from pathlib import Path
 # requirements.txt  (and pip-compile output)
 # ---------------------------------------------------------------------------
 
+import importlib.metadata
+
+def _resolve_installed_version(pkg_name: str) -> str | None:
+    """Return the installed version of *pkg_name* via importlib.metadata, or None."""
+    try:
+        return importlib.metadata.version(pkg_name)
+    except Exception:
+        # Try normalised name variants
+        try:
+            return importlib.metadata.version(pkg_name.replace("-", "_"))
+        except Exception:
+            return None
+
+
 def parse_requirements(filepath: str) -> list[tuple[str, str]]:
     """Parse a pip requirements file, returning (name, version) pairs.
 
     Handles:
-    - ``flask==2.3.0``
-    - ``celery[redis]==5.2.7`` (extras stripped)
+    - Exact pins: ``flask==2.3.0``
+    - Range pins: ``flask>=2.0.0`` (resolves installed version via importlib)
+    - Unpinned: ``flask`` (resolves installed version via importlib)
+    - Extras: ``celery[redis]==5.2.7`` (extras stripped)
     - Comments (``#``) and blank lines are ignored.
-    - Lines without an exact ``==`` pin are skipped.
     """
     deps: list[tuple[str, str]] = []
     with open(filepath, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
-            if not line or line.startswith("#"):
+            if not line or line.startswith("#") or line.startswith("-"):
                 continue
-            match = re.match(
+
+            # Exact pin regex: pkg==1.2.3
+            match_exact = re.match(
                 r"^([A-Za-z0-9_\-\.]+(?:\[[A-Za-z0-9_,\-\.]+\])?)==([0-9A-Za-z\.\-]+)",
                 line,
             )
-            if match:
-                raw_pkg, version = match.group(1), match.group(2)
+            if match_exact:
+                raw_pkg, version = match_exact.group(1), match_exact.group(2)
                 pkg = re.sub(r"\[.*?\]", "", raw_pkg)  # strip extras
                 deps.append((_normalise_name(pkg), version))
+                continue
+
+            # Unpinned or range specification: pkg, pkg>=1.0, pkg~=1.0
+            match_unpinned = re.match(
+                r"^([A-Za-z0-9_\-\.]+(?:\[[A-Za-z0-9_,\-\.]+\])?)",
+                line,
+            )
+            if match_unpinned:
+                raw_pkg = match_unpinned.group(1)
+                pkg = re.sub(r"\[.*?\]", "", raw_pkg)
+                norm_name = _normalise_name(pkg)
+                installed_ver = _resolve_installed_version(norm_name)
+                if installed_ver:
+                    deps.append((norm_name, installed_ver))
     return deps
 
 

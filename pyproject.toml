@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reachguard"
-version = "0.1.1"
+version = "0.1.2"
 description = "Reachability-aware dependency vulnerability scanner for Python"
 readme = "README.md"
 authors = [

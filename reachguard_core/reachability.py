@@ -329,6 +329,46 @@ def _node_matches_target(cg_key: str, target: str) -> bool:
 # BFS reachability check (uses A1 + A2 fixes)
 # ---------------------------------------------------------------------------
 
+from collections import deque
+
+
+def find_reachability_path(
+    call_graph: dict[str, list[str]],
+    entry_points: list[str],
+    target_function: str,
+) -> list[str] | None:
+    """Return the shortest call path from an entry point to *target_function*.
+
+    Uses BFS over *call_graph* to reconstruct the trace.
+
+    Returns:
+        List of node strings representing the call chain, e.g.::
+
+            ["src\\\\app.Flask.run", "src\\\\app.Flask.dispatch_request", "werkzeug.safe_join"]
+
+        Returns ``None`` if *target_function* cannot be reached.
+    """
+    seeds = _seed_from_entry_points(call_graph, entry_points)
+    if not seeds:
+        return None
+
+    visited: set[str] = set(seeds)
+    queue = deque([(s, [s]) for s in seeds])
+
+    while queue:
+        current, path = queue.popleft()
+
+        if _node_matches_target(current, target_function):
+            return path
+
+        for callee in call_graph.get(current, []):
+            if callee not in visited:
+                visited.add(callee)
+                queue.append((callee, path + [callee]))
+
+    return None
+
+
 def is_reachable(
     call_graph: dict[str, list[str]],
     entry_points: list[str],
@@ -336,42 +376,32 @@ def is_reachable(
 ) -> bool:
     """Return *True* if *target_function* is reachable from any entry point.
 
-    Performs iterative DFS over *call_graph* (the dict produced by PyCG::
+    Convenience wrapper around :func:`find_reachability_path`.
+    """
+    return find_reachability_path(call_graph, entry_points, target_function) is not None
 
-        {"src\\\\mod.func_a": ["src\\\\mod.func_b", ...], ...}
 
-    **A1 — seeding**: uses :func:`_seed_from_entry_points` which normalises
-    the mismatched naming schemes of PyCG keys and ``find_entry_points``
-    output via a three-tier strategy.
-
-    **A2 — matching**: uses suffix-anchored name-form intersection so that
-    ``target='load'`` does *not* match ``upload`` or ``reload``.
-
-    Args:
-        call_graph: Mapping of caller → list[callee] as returned by PyCG.
-        entry_points: Strings of the form ``<filepath>::<func_name>`` from
-            :func:`~reachguard_core.entrypoints.find_entry_points`.
-        target_function: Function identifier to search for (may be bare like
-            ``safe_join`` or dotted like ``werkzeug.safe_join``).
+def check_reachability_details(
+    call_graph: dict[str, list[str]],
+    entry_points: list[str],
+    vuln: dict,
+) -> tuple[ReachabilityStatus, list[str] | None]:
+    """High-level helper returning status and the call trace list if reachable.
 
     Returns:
-        ``True`` if reachable, ``False`` otherwise.
+        A tuple of ``(ReachabilityStatus, call_path_list_or_None)``.
     """
-    visited: set[str] = set()
-    stack = _seed_from_entry_points(call_graph, entry_points)  # A1 fix
+    targets = extract_vulnerable_functions(vuln)
 
-    while stack:
-        current = stack.pop()
-        if current in visited:
-            continue
-        visited.add(current)
+    if not targets:
+        return ReachabilityStatus.UNKNOWN, None
 
-        if _node_matches_target(current, target_function):     # A2 fix
-            return True
+    for target in targets:
+        path = find_reachability_path(call_graph, entry_points, target)
+        if path:
+            return ReachabilityStatus.REACHABLE, path
 
-        stack.extend(call_graph.get(current, []))
-
-    return False
+    return ReachabilityStatus.UNREACHABLE, None
 
 
 def check_reachability(
@@ -379,23 +409,6 @@ def check_reachability(
     entry_points: list[str],
     vuln: dict,
 ) -> ReachabilityStatus:
-    """High-level helper that combines extraction and reachability check.
-
-    Args:
-        call_graph: PyCG call graph dict.
-        entry_points: From :func:`~reachguard_core.entrypoints.find_entry_points`.
-        vuln: A single OSV advisory dict.
-
-    Returns:
-        A :class:`ReachabilityStatus` value.
-    """
-    targets = extract_vulnerable_functions(vuln)
-
-    if not targets:
-        return ReachabilityStatus.UNKNOWN
-
-    for target in targets:
-        if is_reachable(call_graph, entry_points, target):
-            return ReachabilityStatus.REACHABLE
-
-    return ReachabilityStatus.UNREACHABLE
+    """High-level helper that combines extraction and reachability check."""
+    status, _ = check_reachability_details(call_graph, entry_points, vuln)
+    return status

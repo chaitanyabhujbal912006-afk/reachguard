@@ -28,7 +28,7 @@ from reachguard_core.osv import query_cves
 from reachguard_core.entrypoints import find_entry_points
 from reachguard_core.reachability import (
     ReachabilityStatus,
-    check_reachability,
+    check_reachability_details,
 )
 
 app = typer.Typer(
@@ -152,8 +152,8 @@ def _get_severity(vuln: dict) -> str:
 # Core scan logic
 # ---------------------------------------------------------------------------
 
-Finding = tuple[str, str, str, str, ReachabilityStatus, str]
-# (package_name, version, cve_id, summary, status, severity)
+Finding = tuple[str, str, str, str, ReachabilityStatus, str, list[str] | None]
+# (package_name, version, cve_id, summary, status, severity, call_path)
 
 
 def scan(
@@ -230,11 +230,11 @@ def scan(
                 severity = _get_severity(vuln)
 
                 if have_graph:
-                    status = check_reachability(call_graph, entry_points, vuln)
+                    status, call_path = check_reachability_details(call_graph, entry_points, vuln)
                 else:
-                    status = ReachabilityStatus.UNKNOWN
+                    status, call_path = ReachabilityStatus.UNKNOWN, None
 
-                findings.append((name, version, cve_id, summary, status, severity))
+                findings.append((name, version, cve_id, summary, status, severity, call_path))
 
             progress.advance(task)
 
@@ -261,22 +261,33 @@ def print_report(findings: list[Finding]) -> None:
     table.add_column("Status",    no_wrap=True,  min_width=16)
     table.add_column("Summary",   style="white")
 
-    for name, version, cve_id, summary, status, severity in findings:
+    for name, version, cve_id, summary, status, severity, call_path in findings:
         sev_text = _SEVERITY_STYLE.get(severity, severity)
+
+        # If REACHABLE and call path exists, append call chain trace to summary
+        display_summary = summary
+        if status == ReachabilityStatus.REACHABLE and call_path:
+            # Format path neatly: e.g. "cli.py::main -> Flask.run -> safe_join"
+            short_nodes = []
+            for node in call_path:
+                short_nodes.append(node.rsplit(".", 1)[-1] if "." in node else node)
+            chain_str = " -> ".join(short_nodes)
+            display_summary += f"\n[dim red]--> Path: {chain_str}[/dim red]"
+
         table.add_row(
             f"{name}=={version}",
             cve_id,
             sev_text,
             _STATUS_RICH[status],
-            summary,
+            display_summary,
         )
 
     console.print(table)
 
-    reachable_n   = sum(1 for *_, s, _ in findings if s == ReachabilityStatus.REACHABLE)
-    unknown_n     = sum(1 for *_, s, _ in findings if s == ReachabilityStatus.UNKNOWN)
-    unreachable_n = sum(1 for *_, s, _ in findings if s == ReachabilityStatus.UNREACHABLE)
-    critical_n    = sum(1 for *_, sev in findings if sev == "CRITICAL")
+    reachable_n   = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.REACHABLE)
+    unknown_n     = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.UNKNOWN)
+    unreachable_n = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.UNREACHABLE)
+    critical_n    = sum(1 for *_, sev, _ in findings if sev == "CRITICAL")
 
     console.print(
         f"\n[bold]Summary:[/bold]  "
@@ -302,14 +313,15 @@ def write_json_output(findings: list[Finding], path: str) -> None:
     """Write findings as structured JSON to *path*."""
     records = [
         {
-            "package":  name,
-            "version":  version,
-            "cve_id":   cve_id,
-            "summary":  summary,
-            "status":   status.value,
-            "severity": severity,
+            "package":   name,
+            "version":   version,
+            "cve_id":    cve_id,
+            "summary":   summary,
+            "status":    status.value,
+            "severity":  severity,
+            "call_path": call_path,
         }
-        for name, version, cve_id, summary, status, severity in findings
+        for name, version, cve_id, summary, status, severity, call_path in findings
     ]
     out = {
         "total":       len(findings),
@@ -362,7 +374,7 @@ def main_cmd(
         if output_json:
             write_json_output(findings, output_json)
         if fail_on_reachable:
-            n = sum(1 for *_, s, _ in findings if s == ReachabilityStatus.REACHABLE)
+            n = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.REACHABLE)
             if n:
                 raise typer.Exit(code=1)
     else:

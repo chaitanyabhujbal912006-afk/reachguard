@@ -20,6 +20,8 @@ from reachguard_core.reachability import (
     _seed_from_entry_points,
     _target_name_forms,
     extract_vulnerable_functions,
+    find_reachability_path,
+    check_reachability_details,
     is_reachable,
 )
 import main as m
@@ -136,15 +138,24 @@ def run_all_tests():
         chk("EP=run matches >= 1 CG key by basename", len(s3) > 0, True)
         print()
 
-        # ── End-to-end reachability ───────────────────────────────────────────────────
-        print("=== End-to-end reachability ===")
+        # ── End-to-end reachability & Call Trace ──────────────────────────────────────
+        print("=== End-to-end reachability & Call Trace ===")
         test_src = PROJECT_ROOT.parent / "test-target" / "src"
         if test_src.exists():
             eps = find_entry_points(str(test_src))
             r1 = is_reachable(cg, eps, "full_dispatch_request")
             chk("full_dispatch_request reachable from __main__", r1, True)
+
+            path = find_reachability_path(cg, eps, "full_dispatch_request")
+            chk("find_reachability_path returns non-empty list", isinstance(path, list) and len(path) > 0, True)
+            if path:
+                print(f"         Reconstructed path: {' -> '.join(path)}")
+
         r2 = is_reachable(cg, eps if test_src.exists() else [], "invented_func_xyz_999")
         chk("invented function NOT reachable", r2, False)
+
+        p_inv = find_reachability_path(cg, eps if test_src.exists() else [], "invented_func_xyz_999")
+        chk("invented function path returns None", p_inv, None)
 
         cg_fake = {f"src{SEP}mod.upload": [], f"src{SEP}mod.reload": []}
         r3 = is_reachable(cg_fake, ["app.py::__main__"], "load")

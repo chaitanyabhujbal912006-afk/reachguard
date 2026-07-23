@@ -253,6 +253,17 @@ python tests/test_suite.py
 
 ---
 
+## 🗺️ Roadmap & Future Backlog
+
+Interested in what's coming next or looking to contribute? Check out our detailed [**ROADMAP.md**](ROADMAP.md) for planned features including:
+- 💡 **Auto-Remediation Patch Advice (`--suggest-fixes`)**
+- 🛡️ **SARIF v2.1.0 Export (`--output-sarif`)**
+- 📊 **Interactive HTML Dashboards (`--output-html`)**
+- 🪝 **Pre-Commit Git Hooks**
+- 🔍 **Extended Framework Detectors (Django, Celery, Click)**
+
+---
+
 ## 🤝 Contributing
 
 Contributions are welcome! Feel free to open an issue or submit a pull request:

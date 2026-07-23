@@ -2,6 +2,7 @@
 
 > **Reachability-Aware Dependency Vulnerability Scanner for Python**
 
+[![PyPI Version](https://img.shields.io/pypi/v/reachguard.svg)](https://pypi.org/project/reachguard/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![OSV.dev](https://img.shields.io/badge/Vulnerability%20Data-OSV.dev-green.svg)](https://osv.dev/)
@@ -55,22 +56,19 @@ Traditional dependency security tools (**Dependabot**, **Snyk**, **Safety**) fla
 
 ## ⚙️ Installation
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/chaitanyabhujbal912006-afk/reachguard.git
-   cd reachguard
-   ```
+### Option 1: Via PyPI (Recommended)
+Install ReachGuard globally from PyPI:
 
-2. **Set up virtual environment & dependencies**:
-   ```bash
-   python -m venv venv
-   # Windows:
-   venv\Scripts\activate
-   # Linux/macOS:
-   source venv/bin/activate
+```bash
+pip install reachguard
+```
 
-   pip install -r requirements.txt
-   ```
+### Option 2: From Source
+```bash
+git clone https://github.com/chaitanyabhujbal912006-afk/reachguard.git
+cd reachguard
+pip install -e .
+```
 
 *(Requirements include `typer`, `rich`, `requests`, and `pycg`)*
 

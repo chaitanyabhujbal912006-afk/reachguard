@@ -47,7 +47,7 @@ Traditional dependency security tools (**Dependabot**, **Snyk**, **Safety**) fla
   * `UNKNOWN` 🟡: Package is imported but function-level advisory details are sparse (Manual Review).
   * `UNREACHABLE` 🟢: Package contains a CVE, but the vulnerable code path is never called (Safe to Deprioritize).
 * ⚡ **Zero-Cost & Local-First**: Built entirely on free, open tools — **OSV.dev API** (no API key needed) and **PyCG** (static analysis).
-* 📦 **Multi-Format Dependency Support**: Auto-detects `requirements.txt`, `pyproject.toml` (PEP 621 & Poetry), and `Pipfile.lock`.
+* 📦 **Multi-Format & Dynamic Dependency Support**: Auto-detects `requirements.txt`, `pyproject.toml` (PEP 621 & Poetry), and `Pipfile.lock`. Automatically resolves exact pins (`flask==2.3.2`) as well as unpinned or version-ranged dependencies (`flask>=2.0`) via `importlib.metadata`.
 * 🔍 **AST Entry Point Detector**: Automatically identifies `if __name__ == '__main__'` blocks and web route handlers (`@app.route`, `@app.get`, `@router.post` for Flask, FastAPI, Starlette).
 * 🧹 **Noise & Stdlib Filter**: Eliminates false positives by filtering standard library method references (`str.format`) and template filter names (`xmlattr`).
 * 📊 **CI/CD Integrated**: Rich terminal formatting with severity levels (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), `--output-json` exports, and `--fail-on-reachable` exit gates for build pipelines.

@@ -40,6 +40,31 @@ Traditional dependency security tools (**Dependabot**, **Snyk**, **Safety**) fla
 
 ---
 
+## 💡 How It Works (In 2 Simple Steps)
+
+1. **Finds CVEs in Dependencies**: ReachGuard reads your `requirements.txt` (or `pyproject.toml` / `Pipfile.lock`) and queries the open **OSV.dev** security database for known vulnerabilities.
+2. **Traces Your Source Code**: It walks your Python source code (`--src ./src`), constructs a call graph via PyCG, and verifies: *"Does your code actually call the broken function inside that package?"*
+
+### 📊 The 3 Statuses ReachGuard Gives You:
+
+| Status | Meaning | Action |
+|---|---|---|
+| 🔴 **`REACHABLE`** | Your code **actually calls** the vulnerable function! | **Fix / Patch Immediately!** |
+| 🟡 **`UNKNOWN`** | Package has a CVE, but advisory function details are sparse. | Manual Review. |
+| 🟢 **`UNREACHABLE`** | Package has a CVE, but your code **never calls** that function. | **Safe to Ignore!** |
+
+### 🔍 Real-World Example:
+
+```text
+Suppose your requirements.txt contains `werkzeug==2.3.3` (which has CVE-2023-221 in `parse_multipart`):
+
+- Dependabot:  🔴 "CRITICAL VULNERABILITY! Update Werkzeug!" (Even if your app never uploads files!)
+- ReachGuard:  🟢 "UNREACHABLE — Werkzeug has a CVE, but your code never calls parse_multipart()."
+- ReachGuard:  🔴 "REACHABLE   — app.py::download() -> Flask.dispatch_request() -> werkzeug.safe_join()"
+```
+
+---
+
 ## 🚀 Key Features
 
 * 🎯 **Smart Reachability Ranking**: Classifies findings into:

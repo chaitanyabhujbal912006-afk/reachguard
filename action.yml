@@ -1,0 +1,49 @@
+name: 'ReachGuard Security Scan'
+description: 'Perform static reachability analysis on Python dependencies to prioritize actionable CVEs.'
+author: 'Chaitanya Bhujbal'
+
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  requirements:
+    description: 'Path to requirements.txt, pyproject.toml, or Pipfile.lock'
+    required: false
+    default: 'requirements.txt'
+  src:
+    description: 'Path to source code directory for call graph generation and entry point mining'
+    required: false
+    default: '.'
+  output_json:
+    description: 'Output JSON report filepath'
+    required: false
+    default: 'reachguard-report.json'
+  fail_on_reachable:
+    description: 'Fail workflow (exit 1) if REACHABLE CVEs are detected'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install ReachGuard dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install typer rich requests pycg
+
+    - name: Run ReachGuard Scan
+      shell: bash
+      run: |
+        ARGS=""
+        if [ -n "${{ inputs.src }}" ]; then ARGS="$ARGS --src ${{ inputs.src }}"; fi
+        if [ -n "${{ inputs.output_json }}" ]; then ARGS="$ARGS --output-json ${{ inputs.output_json }}"; fi
+        if [ "${{ inputs.fail_on_reachable }}" = "true" ]; then ARGS="$ARGS --fail-on-reachable"; fi
+        
+        python ${{ github.action_path }}/main.py ${{ inputs.requirements }} $ARGS

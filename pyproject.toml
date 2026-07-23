@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reachguard"
+version = "0.1.0"
+description = "Reachability-aware dependency vulnerability scanner for Python"
+readme = "README.md"
+authors = [
+    { name = "Chaitanya Bhujbal", email = "chaitanyabhujbal912006@gmail.com" }
+]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+keywords = ["security", "vulnerability", "cve", "reachability", "call-graph", "osv", "static-analysis"]
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "requests>=2.28.0",
+    "pycg>=0.0.6",
+]
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/chaitanyabhujbal912006-afk/reachguard"
+Repository = "https://github.com/chaitanyabhujbal912006-afk/reachguard.git"
+"Bug Tracker" = "https://github.com/chaitanyabhujbal912006-afk/reachguard/issues"
+
+[project.scripts]
+reachguard = "reachguard_core.cli:app"

@@ -3,6 +3,7 @@
 > **Reachability-Aware Dependency Vulnerability Scanner for Python**
 
 [![PyPI Version](https://img.shields.io/pypi/v/reachguard.svg)](https://pypi.org/project/reachguard/)
+[![GitHub Release](https://img.shields.io/github/v/release/chaitanyabhujbal912006-afk/reachguard.svg)](https://github.com/chaitanyabhujbal912006-afk/reachguard/releases)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![OSV.dev](https://img.shields.io/badge/Vulnerability%20Data-OSV.dev-green.svg)](https://osv.dev/)
@@ -105,21 +106,52 @@ pip install -e .
 Provide your dependency file and source code directory. ReachGuard will automatically detect entry points and generate the call graph:
 
 ```bash
-python main.py requirements.txt --src ./src
+reachguard requirements.txt --src ./src
 ```
 
 ### 2. Scan using Pre-Built Call Graph
 If you already generated a PyCG call graph JSON file:
 
 ```bash
-python main.py requirements.txt --src ./src --call-graph callgraph.json
+reachguard requirements.txt --src ./src --call-graph callgraph.json
 ```
 
 ### 3. CI/CD Quality Gate Pipeline
 Export findings to JSON and break the build if any `REACHABLE` vulnerabilities exist:
 
 ```bash
-python main.py requirements.txt --src ./src --output-json report.json --fail-on-reachable
+reachguard requirements.txt --src ./src --output-json report.json --fail-on-reachable
+```
+
+---
+
+## 🤖 GitHub Actions Integration
+
+Add ReachGuard as an automated security quality gate in your repository (`.github/workflows/security.yml`):
+
+```yaml
+name: ReachGuard Security Scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  reachguard-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Run ReachGuard Reachability Scan
+        uses: chaitanyabhujbal912006-afk/reachguard@main
+        with:
+          requirements: 'requirements.txt'
+          src: '.'
+          output_json: 'reachguard-report.json'
+          fail_on_reachable: 'true'
 ```
 
 ---
@@ -127,7 +159,7 @@ python main.py requirements.txt --src ./src --output-json report.json --fail-on-
 ## 📋 CLI Reference
 
 ```text
-Usage: main.py [OPTIONS] REQUIREMENTS_PATH
+Usage: reachguard [OPTIONS] REQUIREMENTS_PATH
 
 Arguments:
   REQUIREMENTS_PATH  Path to requirements.txt, pyproject.toml, or Pipfile.lock  [required]

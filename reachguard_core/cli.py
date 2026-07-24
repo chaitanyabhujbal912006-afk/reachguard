@@ -24,7 +24,7 @@ from rich.table import Table
 from rich import box
 
 from reachguard_core.deps import parse_deps
-from reachguard_core.osv import query_cves, extract_fixed_version
+from reachguard_core.osv import query_cves, query_cves_batch, extract_fixed_version
 from reachguard_core.entrypoints import find_entry_points
 from reachguard_core.reachability import (
     ReachabilityStatus,
@@ -219,12 +219,10 @@ def scan(
         console=console,
         transient=True,
     ) as progress:
-        task = progress.add_task("Querying OSV.dev…", total=len(deps))
+        task = progress.add_task("Querying OSV.dev (parallel)…", total=len(deps))
+        batch_results = query_cves_batch(deps, max_workers=10, callback=lambda: progress.advance(task))
 
-        for name, version in deps:
-            progress.update(task, description=f"[cyan]{name}=={version}[/cyan]")
-            vulns = query_cves(name, version)
-
+        for (name, version), vulns in batch_results.items():
             for vuln in vulns:
                 cve_id        = vuln.get("id", "UNKNOWN")
                 summary       = (vuln.get("summary") or "No summary provided")[:90]
@@ -237,8 +235,6 @@ def scan(
                     status, call_path = ReachabilityStatus.UNKNOWN, None
 
                 findings.append((name, version, cve_id, summary, status, severity, call_path, fixed_version))
-
-            progress.advance(task)
 
     # 4. Sort: REACHABLE first, UNKNOWN second, UNREACHABLE last ----------
     findings.sort(key=lambda row: _RANK[row[4]])

@@ -200,6 +200,12 @@ def run_all_tests():
     chk("SARIF has 1 run", len(sarif_doc.get("runs", [])), 1)
     chk("SARIF result level is error for REACHABLE", sarif_doc["runs"][0]["results"][0]["level"], "error")
     chk("SARIF ruleId matches CVE", sarif_doc["runs"][0]["results"][0]["ruleId"], "CVE-2023-9999")
+
+    # Batch OSV query tests
+    from reachguard_core.osv import query_cves_batch
+    batch_res = query_cves_batch([("flask", "2.3.2"), ("jinja2", "3.1.2")], max_workers=2)
+    chk("query_cves_batch returns dict for all deps", len(batch_res), 2)
+    chk("query_cves_batch returns list for flask", isinstance(batch_res.get(("flask", "2.3.2")), list), True)
     print()
 
     # ── Summary ───────────────────────────────────────────────────────────────────

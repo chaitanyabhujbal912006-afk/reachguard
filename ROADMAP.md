@@ -21,7 +21,7 @@
   - Map `REACHABLE` findings to SARIF `error` level with location URI and message trace.
   - Update `action.yml` to support uploading SARIF files to GitHub Security tab via `github/codeql-action/upload-sarif`.
 
-### 3. ⚡ Async Parallel OSV Batch Queries
+### 3. ⚡ Async Parallel OSV Batch Queries [COMPLETED]
 * **Goal**: Speed up dependency scanning for large projects with 100+ dependencies by making concurrent HTTP requests to OSV.dev.
 * **Implementation Outline**:
   - Update `reachguard_core/osv.py` to use `concurrent.futures.ThreadPoolExecutor` or `asyncio` / `httpx`.
@@ -73,7 +73,7 @@
 
 - [x] Implement `--suggest-fixes` patch recommendations.
 - [x] Implement `--output-sarif` for GitHub Code Scanning tab integration.
-- [ ] Add parallel thread executor to `osv.py` for sub-second queries.
+- [x] Add parallel thread executor to `osv.py` for sub-second queries.
 - [ ] Implement standalone HTML report generator (`--output-html`).
 - [ ] Add `.pre-commit-hooks.yaml` config.
 - [ ] Extend `entrypoints.py` AST walker for Django and Celery.

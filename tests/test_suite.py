@@ -162,8 +162,8 @@ def run_all_tests():
         chk("load does NOT false-match upload/reload", r3, False)
         print()
 
-    # ── B5: Severity extraction ───────────────────────────────────────────────────
-    print("=== B5: Severity extraction ===")
+    # ── B5 & Auto-remediation: Severity & Patch extraction ────────────────────────
+    print("=== B5 & Auto-remediation: Severity & Patch extraction ===")
     chk("sev from database_specific", m._get_severity({"database_specific": {"severity": "HIGH"}, "affected": []}), "HIGH")
     chk(
         "sev from affected.database_specific",
@@ -171,6 +171,22 @@ def run_all_tests():
         "CRITICAL",
     )
     chk("sev empty returns dash", m._get_severity({"affected": [], "database_specific": {}}), "-")
+
+    # Fixed version extraction tests
+    sample_vuln_fixed = {
+        "affected": [
+            {
+                "ranges": [
+                    {
+                        "type": "ECOSYSTEM",
+                        "events": [{"introduced": "0"}, {"fixed": "2.3.6"}],
+                    }
+                ]
+            }
+        ]
+    }
+    chk("extract_fixed_version returns fixed version", m.extract_fixed_version(sample_vuln_fixed), "2.3.6")
+    chk("extract_fixed_version empty returns None", m.extract_fixed_version({}), None)
     print()
 
     # ── Summary ───────────────────────────────────────────────────────────────────

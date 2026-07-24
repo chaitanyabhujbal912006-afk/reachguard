@@ -1,3 +1,4 @@
+
 # ReachGuard 🛡️
 
 > **Reachability-Aware Dependency Vulnerability Scanner for Python**
@@ -169,6 +170,7 @@ Options:
   -g, --call-graph TEXT   Path to pre-built PyCG call graph JSON file.
   -o, --output-json TEXT  File path to export scan findings as structured JSON.
   --fail-on-reachable     Exit with non-zero status (1) if reachable CVEs are detected.
+  --suggest-fixes         Display recommended pip upgrade patch commands for vulnerabilities.
   --help                  Show this message and exit.
 ```
 

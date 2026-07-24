@@ -6,7 +6,7 @@
 
 ## 📌 Phase 1: High-Value Quick Wins (Prioritized)
 
-### 1. 💡 Auto-Remediation & Patch Advice (`--suggest-fixes`)
+### 1. 💡 Auto-Remediation & Patch Advice (`--suggest-fixes`) [COMPLETED]
 * **Goal**: For every `REACHABLE` vulnerability, extract the fixed version from OSV advisories and display the exact upgrade command.
 * **CLI Flag**: `reachguard requirements.txt --src ./src --suggest-fixes`
 * **Implementation Outline**:
@@ -71,7 +71,7 @@
 
 ## 🛠️ Summary Task Checklist
 
-- [ ] Implement `--suggest-fixes` patch recommendations.
+- [x] Implement `--suggest-fixes` patch recommendations.
 - [ ] Implement `--output-sarif` for GitHub Code Scanning tab integration.
 - [ ] Add parallel thread executor to `osv.py` for sub-second queries.
 - [ ] Implement standalone HTML report generator (`--output-html`).

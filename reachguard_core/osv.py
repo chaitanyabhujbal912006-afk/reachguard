@@ -18,3 +18,13 @@ def query_cves(package_name: str, version: str, ecosystem: str = "PyPI") -> list
     except Exception as e:
         return []
 
+
+def extract_fixed_version(vuln: dict) -> str | None:
+    """Extract the minimum fixed version for *vuln* from OSV advisory events, or None."""
+    for affected in vuln.get("affected", []):
+        for r in affected.get("ranges", []):
+            for event in r.get("events", []):
+                if "fixed" in event:
+                    return event["fixed"]
+    return None
+

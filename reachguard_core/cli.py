@@ -24,7 +24,7 @@ from rich.table import Table
 from rich import box
 
 from reachguard_core.deps import parse_deps
-from reachguard_core.osv import query_cves
+from reachguard_core.osv import query_cves, extract_fixed_version
 from reachguard_core.entrypoints import find_entry_points
 from reachguard_core.reachability import (
     ReachabilityStatus,
@@ -152,8 +152,8 @@ def _get_severity(vuln: dict) -> str:
 # Core scan logic
 # ---------------------------------------------------------------------------
 
-Finding = tuple[str, str, str, str, ReachabilityStatus, str, list[str] | None]
-# (package_name, version, cve_id, summary, status, severity, call_path)
+Finding = tuple[str, str, str, str, ReachabilityStatus, str, list[str] | None, str | None]
+# (package_name, version, cve_id, summary, status, severity, call_path, fixed_version)
 
 
 def scan(
@@ -225,16 +225,17 @@ def scan(
             vulns = query_cves(name, version)
 
             for vuln in vulns:
-                cve_id   = vuln.get("id", "UNKNOWN")
-                summary  = (vuln.get("summary") or "No summary provided")[:90]
-                severity = _get_severity(vuln)
+                cve_id        = vuln.get("id", "UNKNOWN")
+                summary       = (vuln.get("summary") or "No summary provided")[:90]
+                severity      = _get_severity(vuln)
+                fixed_version = extract_fixed_version(vuln)
 
                 if have_graph:
                     status, call_path = check_reachability_details(call_graph, entry_points, vuln)
                 else:
                     status, call_path = ReachabilityStatus.UNKNOWN, None
 
-                findings.append((name, version, cve_id, summary, status, severity, call_path))
+                findings.append((name, version, cve_id, summary, status, severity, call_path, fixed_version))
 
             progress.advance(task)
 
@@ -247,7 +248,7 @@ def scan(
 # Rich report (B5: severity column)
 # ---------------------------------------------------------------------------
 
-def print_report(findings: list[Finding]) -> None:
+def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
     """Render findings as a colour-coded Rich table."""
     table = Table(
         title="ReachGuard Scan Results",
@@ -261,7 +262,7 @@ def print_report(findings: list[Finding]) -> None:
     table.add_column("Status",    no_wrap=True,  min_width=16)
     table.add_column("Summary",   style="white")
 
-    for name, version, cve_id, summary, status, severity, call_path in findings:
+    for name, version, cve_id, summary, status, severity, call_path, fixed_version in findings:
         sev_text = _SEVERITY_STYLE.get(severity, severity)
 
         # If REACHABLE and call path exists, append call chain trace to summary
@@ -274,6 +275,10 @@ def print_report(findings: list[Finding]) -> None:
             chain_str = " -> ".join(short_nodes)
             display_summary += f"\n[dim red]--> Path: {chain_str}[/dim red]"
 
+        # Append remediation patch suggestion if requested or fixed_version available
+        if suggest_fixes and fixed_version:
+            display_summary += f"\n[bold green]--> Fix: pip install {name}>={fixed_version}[/bold green]"
+
         table.add_row(
             f"{name}=={version}",
             cve_id,
@@ -284,10 +289,10 @@ def print_report(findings: list[Finding]) -> None:
 
     console.print(table)
 
-    reachable_n   = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.REACHABLE)
-    unknown_n     = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.UNKNOWN)
-    unreachable_n = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.UNREACHABLE)
-    critical_n    = sum(1 for *_, sev, _ in findings if sev == "CRITICAL")
+    reachable_n   = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
+    unknown_n     = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.UNKNOWN)
+    unreachable_n = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.UNREACHABLE)
+    critical_n    = sum(1 for _, _, _, _, _, sev, _, _ in findings if sev == "CRITICAL")
 
     console.print(
         f"\n[bold]Summary:[/bold]  "
@@ -313,15 +318,17 @@ def write_json_output(findings: list[Finding], path: str) -> None:
     """Write findings as structured JSON to *path*."""
     records = [
         {
-            "package":   name,
-            "version":   version,
-            "cve_id":    cve_id,
-            "summary":   summary,
-            "status":    status.value,
-            "severity":  severity,
-            "call_path": call_path,
+            "package":       name,
+            "version":       version,
+            "cve_id":        cve_id,
+            "summary":       summary,
+            "status":        status.value,
+            "severity":      severity,
+            "call_path":     call_path,
+            "fixed_version": fixed_version,
+            "suggested_fix": f"pip install {name}>={fixed_version}" if fixed_version else None,
         }
-        for name, version, cve_id, summary, status, severity, call_path in findings
+        for name, version, cve_id, summary, status, severity, call_path, fixed_version in findings
     ]
     out = {
         "total":       len(findings),
@@ -365,16 +372,21 @@ def main_cmd(
         "--fail-on-reachable",
         help="Exit with code 1 if any REACHABLE CVEs are found (useful in CI).",
     ),
+    suggest_fixes: bool = typer.Option(
+        False,
+        "--suggest-fixes",
+        help="Display recommended pip upgrade patch commands for vulnerabilities.",
+    ),
 ) -> None:
     """Scan dependencies for CVEs and rank by reachability."""
     findings = scan(requirements_path, src_path=src, call_graph_path=call_graph)
 
     if findings:
-        print_report(findings)
+        print_report(findings, suggest_fixes=suggest_fixes)
         if output_json:
             write_json_output(findings, output_json)
         if fail_on_reachable:
-            n = sum(1 for *_, s, _, _ in findings if s == ReachabilityStatus.REACHABLE)
+            n = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
             if n:
                 raise typer.Exit(code=1)
     else:

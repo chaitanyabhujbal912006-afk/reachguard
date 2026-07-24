@@ -19,6 +19,14 @@ inputs:
     description: 'Output JSON report filepath'
     required: false
     default: 'reachguard-report.json'
+  output_sarif:
+    description: 'Output SARIF report filepath (for GitHub Security Code Scanning tab)'
+    required: false
+    default: 'reachguard-report.sarif'
+  suggest_fixes:
+    description: 'Include pip patch recommendations'
+    required: false
+    default: 'true'
   fail_on_reachable:
     description: 'Fail workflow (exit 1) if REACHABLE CVEs are detected'
     required: false
@@ -44,6 +52,8 @@ runs:
         ARGS=""
         if [ -n "${{ inputs.src }}" ]; then ARGS="$ARGS --src ${{ inputs.src }}"; fi
         if [ -n "${{ inputs.output_json }}" ]; then ARGS="$ARGS --output-json ${{ inputs.output_json }}"; fi
+        if [ -n "${{ inputs.output_sarif }}" ]; then ARGS="$ARGS --output-sarif ${{ inputs.output_sarif }}"; fi
+        if [ "${{ inputs.suggest_fixes }}" = "true" ]; then ARGS="$ARGS --suggest-fixes"; fi
         if [ "${{ inputs.fail_on_reachable }}" = "true" ]; then ARGS="$ARGS --fail-on-reachable"; fi
         
         python ${{ github.action_path }}/main.py ${{ inputs.requirements }} $ARGS

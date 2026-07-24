@@ -13,7 +13,7 @@
   - In `reachguard_core/osv.py`: Extract `affected[].ranges[].events[].fixed` version string from OSV JSON response.
   - In `reachguard_core/cli.py`: If `--suggest-fixes` is active, append `pip install <package>>=<fixed_version>` beneath reachable findings in terminal table and JSON output.
 
-### 2. 🛡️ SARIF Output Format (`--output-sarif report.sarif`)
+### 2. 🛡️ SARIF Output Format (`--output-sarif report.sarif`) [COMPLETED]
 * **Goal**: Support standard SARIF v2.1.0 output for native GitHub Code Scanning & VS Code integration.
 * **CLI Flag**: `reachguard requirements.txt --src ./src --output-sarif report.sarif`
 * **Implementation Outline**:
@@ -72,7 +72,7 @@
 ## 🛠️ Summary Task Checklist
 
 - [x] Implement `--suggest-fixes` patch recommendations.
-- [ ] Implement `--output-sarif` for GitHub Code Scanning tab integration.
+- [x] Implement `--output-sarif` for GitHub Code Scanning tab integration.
 - [ ] Add parallel thread executor to `osv.py` for sub-second queries.
 - [ ] Implement standalone HTML report generator (`--output-html`).
 - [ ] Add `.pre-commit-hooks.yaml` config.

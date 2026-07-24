@@ -187,6 +187,19 @@ def run_all_tests():
     }
     chk("extract_fixed_version returns fixed version", m.extract_fixed_version(sample_vuln_fixed), "2.3.6")
     chk("extract_fixed_version empty returns None", m.extract_fixed_version({}), None)
+
+    # SARIF generation tests
+    from reachguard_core.sarif import generate_sarif
+    from reachguard_core.reachability import ReachabilityStatus
+
+    sample_findings = [
+        ("flask", "2.3.0", "CVE-2023-9999", "Sample summary", ReachabilityStatus.REACHABLE, "HIGH", ["app.py::main", "flask.run"], "2.3.2")
+    ]
+    sarif_doc = generate_sarif(sample_findings, requirements_path="requirements.txt")
+    chk("SARIF version is 2.1.0", sarif_doc.get("version"), "2.1.0")
+    chk("SARIF has 1 run", len(sarif_doc.get("runs", [])), 1)
+    chk("SARIF result level is error for REACHABLE", sarif_doc["runs"][0]["results"][0]["level"], "error")
+    chk("SARIF ruleId matches CVE", sarif_doc["runs"][0]["results"][0]["ruleId"], "CVE-2023-9999")
     print()
 
     # ── Summary ───────────────────────────────────────────────────────────────────

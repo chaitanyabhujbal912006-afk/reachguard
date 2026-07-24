@@ -30,6 +30,7 @@ from reachguard_core.reachability import (
     ReachabilityStatus,
     check_reachability_details,
 )
+from reachguard_core.sarif import write_sarif_output
 
 app = typer.Typer(
     help="ReachGuard — Reachability-aware dependency vulnerability scanner",
@@ -377,6 +378,11 @@ def main_cmd(
         "--suggest-fixes",
         help="Display recommended pip upgrade patch commands for vulnerabilities.",
     ),
+    output_sarif: str = typer.Option(
+        None,
+        "--output-sarif",
+        help="Write findings in SARIF v2.1.0 format (for GitHub Security Code Scanning tab).",
+    ),
 ) -> None:
     """Scan dependencies for CVEs and rank by reachability."""
     findings = scan(requirements_path, src_path=src, call_graph_path=call_graph)
@@ -385,6 +391,9 @@ def main_cmd(
         print_report(findings, suggest_fixes=suggest_fixes)
         if output_json:
             write_json_output(findings, output_json)
+        if output_sarif:
+            write_sarif_output(findings, output_sarif, requirements_path=requirements_path)
+            console.print(f"\n[dim]SARIF report written to:[/dim] [cyan]{output_sarif}[/cyan]")
         if fail_on_reachable:
             n = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
             if n:

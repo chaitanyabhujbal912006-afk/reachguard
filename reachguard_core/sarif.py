@@ -78,7 +78,7 @@ def generate_sarif(findings: list[Finding], requirements_path: str = "requiremen
                 "tool": {
                     "driver": {
                         "name": "ReachGuard",
-                        "semanticVersion": "0.1.4",
+                        "semanticVersion": "0.2.0",
                         "informationUri": "https://github.com/chaitanyabhujbal912006-afk/reachguard",
                         "rules": rules
                     }

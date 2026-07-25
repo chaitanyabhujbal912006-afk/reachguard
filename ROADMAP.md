@@ -1,6 +1,6 @@
-# ReachGuard 🗺️ Roadmap & Feature Backlog
+# ReachGuard 🛡️ Roadmap & Feature Backlog
 
-> A comprehensive task list and implementation guide for future ReachGuard enhancements.
+> **Refined. Secure. Connected.** — A comprehensive task list and implementation guide for future ReachGuard enhancements.
 
 ---
 
@@ -74,7 +74,7 @@
 - [x] Implement `--suggest-fixes` patch recommendations.
 - [x] Implement `--output-sarif` for GitHub Code Scanning tab integration.
 - [x] Add parallel thread executor to `osv.py` for sub-second queries.
-- [ ] Implement standalone HTML report generator (`--output-html`).
-- [ ] Add `.pre-commit-hooks.yaml` config.
+- [x] Implement standalone HTML report generator (`--output-html`).
+- [x] Add `.pre-commit-hooks.yaml` config.
 - [ ] Extend `entrypoints.py` AST walker for Django and Celery.
 - [ ] Add CycloneDX SBOM exporter (`--output-sbom`).

@@ -1,10 +1,10 @@
 name: 'ReachGuard Security Scan'
-description: 'Perform static reachability analysis on Python dependencies to prioritize actionable CVEs.'
+description: 'Refined. Secure. Connected. — Reachability-aware dependency vulnerability scanner for Python.'
 author: 'Chaitanya Bhujbal'
 
 branding:
   icon: 'shield'
-  color: 'red'
+  color: 'blue'
 
 inputs:
   requirements:

@@ -1,14 +1,22 @@
 
-# ReachGuard 🛡️
+<p align="center">
+  <img src="logo.png" alt="ReachGuard Logo" width="600" />
+</p>
 
-> **Reachability-Aware Dependency Vulnerability Scanner for Python**
+<p align="center">
+  <strong>Refined. Secure. Connected.</strong><br>
+  <em>Reachability-Aware Dependency Vulnerability Scanner for Python</em>
+</p>
 
-[![PyPI Version](https://img.shields.io/pypi/v/reachguard.svg)](https://pypi.org/project/reachguard/)
-[![GitHub Release](https://img.shields.io/github/v/release/chaitanyabhujbal912006-afk/reachguard.svg)](https://github.com/chaitanyabhujbal912006-afk/reachguard/releases)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![OSV.dev](https://img.shields.io/badge/Vulnerability%20Data-OSV.dev-green.svg)](https://osv.dev/)
-[![PyCG Powered](https://img.shields.io/badge/Call%20Graph-PyCG-purple.svg)](https://github.com/vitsalis/pycg)
+<p align="center">
+  <a href="https://pypi.org/project/reachguard/"><img src="https://img.shields.io/pypi/v/reachguard.svg" alt="PyPI Version"></a>
+  <a href="https://github.com/chaitanyabhujbal912006-afk/reachguard/releases"><img src="https://img.shields.io/github/v/release/chaitanyabhujbal912006-afk/reachguard.svg" alt="GitHub Release"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
+  <a href="https://github.com/chaitanyabhujbal912006-afk/reachguard"><img src="https://img.shields.io/badge/ReachGuard-0%20Reachable%20CVEs-brightgreen.svg" alt="ReachGuard Self-Scan"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://osv.dev/"><img src="https://img.shields.io/badge/Vulnerability%20Data-OSV.dev-green.svg" alt="OSV.dev"></a>
+  <a href="https://github.com/vitsalis/pycg"><img src="https://img.shields.io/badge/Call%20Graph-PyCG-purple.svg" alt="PyCG Powered"></a>
+</p>
 
 ---
 
@@ -77,7 +85,8 @@ Suppose your requirements.txt contains `werkzeug==2.3.3` (which has CVE-2023-221
 * 📦 **Multi-Format & Dynamic Dependency Support**: Auto-detects `requirements.txt`, `pyproject.toml` (PEP 621 & Poetry), and `Pipfile.lock`. Automatically resolves exact pins (`flask==2.3.2`) as well as unpinned or version-ranged dependencies (`flask>=2.0`) via `importlib.metadata`.
 * 🔍 **AST Entry Point Detector**: Automatically identifies `if __name__ == '__main__'` blocks and web route handlers (`@app.route`, `@app.get`, `@router.post` for Flask, FastAPI, Starlette).
 * 🧹 **Noise & Stdlib Filter**: Eliminates false positives by filtering standard library method references (`str.format`) and template filter names (`xmlattr`).
-* 📊 **CI/CD Integrated**: Rich terminal formatting with severity levels (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), `--output-json` exports, and `--fail-on-reachable` exit gates for build pipelines.
+* 📊 **CI/CD Integrated**: Rich terminal formatting with severity levels (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), `--output-json` exports, `--output-sarif` for GitHub Code Scanning, `--output-html` interactive dashboards, and `--fail-on-reachable` exit gates for build pipelines.
+* 🪝 **Pre-Commit Hook**: Native [pre-commit](https://pre-commit.com/) framework support — block commits automatically if reachable CVEs are detected.
 
 ---
 
@@ -157,7 +166,36 @@ jobs:
 
 ---
 
-## 📋 CLI Reference
+## 🪝 Pre-Commit Integration
+
+ReachGuard supports the [pre-commit](https://pre-commit.com/) framework, letting you block commits automatically when reachable CVEs are found.
+
+### Setup
+
+1. Install pre-commit (if you haven't already):
+   ```bash
+   pip install pre-commit
+   ```
+
+2. Add the following to your project's `.pre-commit-config.yaml`:
+   ```yaml
+   repos:
+     - repo: https://github.com/chaitanyabhujbal912006-afk/reachguard
+       rev: main  # or pin to a specific release tag
+       hooks:
+         - id: reachguard
+           args: ["requirements.txt", "--src", ".", "--fail-on-reachable"]
+   ```
+
+3. Install the hooks:
+   ```bash
+   pre-commit install
+   ```
+
+From now on, every `git commit` will automatically run a ReachGuard scan. Commits are blocked if any `REACHABLE` CVEs are found.
+
+---
+
 
 ```text
 Usage: reachguard [OPTIONS] REQUIREMENTS_PATH
@@ -170,6 +208,7 @@ Options:
   -g, --call-graph TEXT   Path to pre-built PyCG call graph JSON file.
   -o, --output-json TEXT  File path to export scan findings as structured JSON.
   --output-sarif TEXT     Write findings in SARIF v2.1.0 format (for GitHub Security Code Scanning).
+  --output-html TEXT      Write an interactive HTML dashboard report to this file.
   --fail-on-reachable     Exit with non-zero status (1) if reachable CVEs are detected.
   --suggest-fixes         Display recommended pip upgrade patch commands for vulnerabilities.
   --help                  Show this message and exit.

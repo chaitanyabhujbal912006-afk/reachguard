@@ -1,0 +1,8 @@
+- id: reachguard
+  name: ReachGuard Reachability Scan
+  description: Scan Python dependencies for reachable CVEs before every commit.
+  entry: reachguard
+  language: python
+  types: [python]
+  pass_filenames: false
+  additional_dependencies: []

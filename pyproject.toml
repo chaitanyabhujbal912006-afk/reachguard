@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reachguard"
 version = "0.1.5"
-description = "Reachability-aware dependency vulnerability scanner for Python"
+description = "Refined. Secure. Connected. — Reachability-aware dependency vulnerability scanner for Python"
 readme = "README.md"
 authors = [
     { name = "Chaitanya Bhujbal", email = "chaitanyabhujbal912006@gmail.com" }

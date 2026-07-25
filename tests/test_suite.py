@@ -208,6 +208,153 @@ def run_all_tests():
     chk("query_cves_batch returns list for flask", isinstance(batch_res.get(("flask", "2.3.2")), list), True)
     print()
 
+    # ── Phase 2: HTML Report Generator ───────────────────────────────────────────
+    print("=== Phase 2: HTML Report Generator ===")
+    from reachguard_core.html_report import generate_html_report, write_html_report
+    import tempfile
+
+    p2_findings = [
+        ("werkzeug", "2.3.3", "GHSA-29vq-49wr-vm6x", "High resource usage when parsing multipart", ReachabilityStatus.REACHABLE,   "HIGH",     ["app.main", "flask.dispatch_request", "werkzeug.safe_join"], "3.0.1"),
+        ("jinja2",   "3.1.2", "GHSA-q2x7-8rv6-6q7h", "Jinja sandbox breakout via format string",   ReachabilityStatus.UNREACHABLE, "MEDIUM",   None, "3.1.3"),
+        ("celery",   "5.2.7", "GHSA-1234-abcd-5678", "Celery deserialization vulnerability",        ReachabilityStatus.UNKNOWN,     "CRITICAL", None, None),
+    ]
+
+    # 1. generate_html_report returns a non-empty string
+    html = generate_html_report(p2_findings, requirements_path="requirements.txt")
+    chk("generate_html_report returns str", isinstance(html, str), True)
+    chk("HTML report is non-empty (>1000 chars)", len(html) > 1000, True)
+
+    # 2. Output contains expected structural markers
+    chk("HTML has <!DOCTYPE html>",       "<!DOCTYPE html>" in html,      True)
+    chk("HTML has <canvas id=donutChart>","donutChart" in html,           True)
+    chk("HTML has <canvas id=barChart>",  "barChart" in html,             True)
+    chk("HTML has findings table",        "findingsTable" in html,        True)
+    chk("HTML has SCAN_DATA json blob",   "const SCAN_DATA" in html,      True)
+    chk("HTML has Chart.js CDN script",   "chart.js" in html.lower(),     True)
+
+    # 3. Scan data JSON is valid and has correct counts
+    import re as _re
+    match = _re.search(r"const SCAN_DATA = (\{.*?\});", html, _re.DOTALL)
+    chk("SCAN_DATA JSON block found", match is not None, True)
+    if match:
+        scan_data = json.loads(match.group(1))
+        chk("scan_data.total == 3",       scan_data["total"],       3)
+        chk("scan_data.reachable == 1",   scan_data["reachable"],   1)
+        chk("scan_data.unknown == 1",     scan_data["unknown"],     1)
+        chk("scan_data.unreachable == 1", scan_data["unreachable"], 1)
+        chk("scan_data.findings is list", isinstance(scan_data["findings"], list), True)
+
+        # 4. Individual finding fields
+        f0 = scan_data["findings"][0]
+        chk("finding[0].package == werkzeug",         f0["package"],  "werkzeug")
+        chk("finding[0].status == REACHABLE",          f0["status"],   "REACHABLE")
+        chk("finding[0].severity == HIGH",             f0["severity"], "HIGH")
+        chk("finding[0].call_path is list",            isinstance(f0["call_path"], list), True)
+        chk("finding[0].suggested_fix contains pip",   "pip install" in (f0["suggested_fix"] or ""), True)
+        chk("finding[0].fixed_version == 3.0.1",       f0["fixed_version"], "3.0.1")
+
+        f2 = scan_data["findings"][2]
+        chk("finding[2].suggested_fix is None",        f2["suggested_fix"], None)
+        chk("finding[2].call_path is None",            f2["call_path"],     None)
+
+    # 5. CVE IDs appear in the HTML (table rows)
+    chk("HTML contains werkzeug CVE ID",  "GHSA-29vq-49wr-vm6x" in html, True)
+    chk("HTML contains jinja2 CVE ID",   "GHSA-q2x7-8rv6-6q7h" in html, True)
+    chk("HTML contains celery CVE ID",   "GHSA-1234-abcd-5678" in html,  True)
+
+    # 6. Suggested fix shows up for reachable finding
+    chk("HTML contains fix pip command", "pip install werkzeug>=3.0.1" in html, True)
+
+    # 7. write_html_report writes a valid file
+    with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w") as tmp:
+        tmp_html_path = tmp.name
+    try:
+        write_html_report(p2_findings, tmp_html_path, requirements_path="requirements.txt")
+        written = Path(tmp_html_path).read_text(encoding="utf-8")
+        chk("write_html_report file exists",         Path(tmp_html_path).exists(), True)
+        chk("write_html_report file non-empty",      len(written) > 1000,          True)
+        chk("write_html_report content matches gen", written == html,              True)
+    finally:
+        try:
+            os.unlink(tmp_html_path)
+        except OSError:
+            pass
+
+    # 8. Empty findings produce valid HTML with zero counts
+    html_empty = generate_html_report([], requirements_path="pyproject.toml")
+    chk("Empty findings: HTML valid",          "<!DOCTYPE html>" in html_empty, True)
+    chk("Empty findings: total=0 in HTML",     '"total": 0' in html_empty,      True)
+    chk("Empty findings: reachable=0 in HTML", '"reachable": 0' in html_empty,  True)
+
+    # 9. Scan target name reflects requirements file basename
+    chk("HTML title contains requirements.txt", "requirements.txt" in html,          True)
+    html_toml = generate_html_report([], requirements_path="pyproject.toml")
+    chk("HTML title reflects pyproject.toml",   "pyproject.toml" in html_toml,       True)
+
+    # 10. UNKNOWN finding has no suggested_fix
+    if match:
+        unknown_finding = scan_data["findings"][2]  # celery — UNKNOWN, no fixed_version
+        chk("UNKNOWN finding has no suggested_fix", unknown_finding["suggested_fix"], None)
+
+    print()
+
+    # ── Phase 2: Pre-Commit Hook YAML ────────────────────────────────────────────
+    print("=== Phase 2: Pre-Commit Hook YAML ===")
+    hook_file = PROJECT_ROOT / ".pre-commit-hooks.yaml"
+    chk(".pre-commit-hooks.yaml exists", hook_file.exists(), True)
+
+    if hook_file.exists():
+        raw = hook_file.read_text(encoding="utf-8")
+        chk("hooks file is non-empty", len(raw) > 0, True)
+
+        try:
+            import yaml as _yaml
+            hooks = _yaml.safe_load(raw)
+            chk("hooks YAML parses to a list",     isinstance(hooks, list), True)
+            chk("hooks list has at least 1 entry", len(hooks) >= 1,         True)
+            h = hooks[0]
+            chk("hook id == reachguard",       h.get("id"),             "reachguard")
+            chk("hook entry == reachguard",    h.get("entry"),          "reachguard")
+            chk("hook language == python",     h.get("language"),       "python")
+            chk("hook pass_filenames == False",h.get("pass_filenames"), False)
+            chk("hook name is non-empty str",  isinstance(h.get("name"), str) and len(h["name"]) > 0, True)
+        except ImportError:
+            # pyyaml not installed; do a lightweight string check instead
+            chk("hooks file contains 'id: reachguard'",      "id: reachguard"      in raw, True)
+            chk("hooks file contains 'language: python'",    "language: python"    in raw, True)
+            chk("hooks file contains 'entry: reachguard'",   "entry: reachguard"   in raw, True)
+            chk("hooks file contains 'pass_filenames: false'","pass_filenames: false" in raw, True)
+
+    # 11. pyproject.toml exposes the reachguard entry point
+    toml_file = PROJECT_ROOT / "pyproject.toml"
+    if toml_file.exists():
+        toml_raw = toml_file.read_text(encoding="utf-8")
+        chk("pyproject.toml has reachguard entry point",
+            'reachguard = "reachguard_core.cli:app"' in toml_raw, True)
+
+    print()
+
+    # ── Phase 2: CLI --output-html flag ──────────────────────────────────────────
+    print("=== Phase 2: CLI --output-html flag ===")
+    import inspect
+    sig = inspect.signature(m.main_cmd)
+    chk("main_cmd has output_html parameter", "output_html" in sig.parameters, True)
+
+    # Smoke-test: write HTML via the module-level alias exposed by the CLI import
+    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp2:
+        cli_html_path = tmp2.name
+    try:
+        m.write_html_report(p2_findings, cli_html_path, requirements_path="requirements.txt")
+        cli_html = Path(cli_html_path).read_text(encoding="utf-8")
+        chk("CLI write_html_report produces valid HTML", "<!DOCTYPE html>" in cli_html, True)
+    finally:
+        try:
+            os.unlink(cli_html_path)
+        except OSError:
+            pass
+
+    print()
+
     # ── Summary ───────────────────────────────────────────────────────────────────
     print("=" * 55)
     if failures:

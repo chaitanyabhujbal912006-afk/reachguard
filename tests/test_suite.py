@@ -353,6 +353,85 @@ def run_all_tests():
         except OSError:
             pass
 
+    # ── Phase 3: CycloneDX SBOM Exporter ──────────────────────────────────────────
+    print("=== Phase 3: CycloneDX SBOM Exporter ===")
+    from reachguard_core.sbom import generate_cyclonedx_sbom, write_sbom_output
+
+    sample_deps = [("flask", "2.3.0"), ("jinja2", "3.1.2")]
+    sample_findings_sbom = [
+        ("flask", "2.3.0", "CVE-2023-9999", "Sample summary", ReachabilityStatus.REACHABLE, "HIGH", ["app.py::main", "flask.run"], "2.3.2")
+    ]
+    sbom_doc = generate_cyclonedx_sbom(sample_findings_sbom, sample_deps, requirements_path="requirements.txt")
+    chk("CycloneDX bomFormat is CycloneDX", sbom_doc.get("bomFormat"), "CycloneDX")
+    chk("CycloneDX specVersion is 1.5", sbom_doc.get("specVersion"), "1.5")
+    chk("CycloneDX components count is 2", len(sbom_doc.get("components", [])), 2)
+    chk("CycloneDX vulnerabilities count is 1", len(sbom_doc.get("vulnerabilities", [])), 1)
+
+    v0 = sbom_doc["vulnerabilities"][0]
+    chk("CycloneDX vuln id matches", v0.get("id"), "CVE-2023-9999")
+    props = {p["name"]: p["value"] for p in v0.get("properties", [])}
+    chk("CycloneDX reachability property is REACHABLE", props.get("reachguard:reachability_status"), "REACHABLE")
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_sbom:
+        tmp_sbom_path = tmp_sbom.name
+    try:
+        write_sbom_output(sample_findings_sbom, sample_deps, tmp_sbom_path, requirements_path="requirements.txt")
+        chk("write_sbom_output file exists and non-empty", Path(tmp_sbom_path).exists() and Path(tmp_sbom_path).stat().st_size > 100, True)
+    finally:
+        try:
+            os.unlink(tmp_sbom_path)
+        except OSError:
+            pass
+    print()
+
+    # ── Phase 3: Policy Suppression Engine ─────────────────────────────────────────
+    print("=== Phase 3: Policy Suppression Engine ===")
+    from reachguard_core.policy import ReachGuardPolicy, load_policy
+
+    pol = ReachGuardPolicy()
+    pol.add_ignore_id("CVE-2023-1111", reason="False positive")
+    pol.add_ignore_package("malicious-pkg")
+
+    chk("Policy ignores CVE-2023-1111", pol.is_ignored("CVE-2023-1111", "other-pkg")[0], True)
+    chk("Policy reason matches for CVE-2023-1111", pol.is_ignored("CVE-2023-1111", "other-pkg")[1], "False positive")
+    chk("Policy ignores package malicious-pkg", pol.is_ignored("CVE-2023-9999", "malicious-pkg")[0], True)
+    chk("Policy does not ignore unlisted CVE", pol.is_ignored("CVE-2023-0000", "safe-pkg")[0], False)
+
+    # Test .reachguardignore file parsing
+    with tempfile.NamedTemporaryFile(suffix=".reachguardignore", delete=False, mode="w") as tmp_pol:
+        tmp_pol.write("CVE-2023-8888 # Ignored via file\nbad-dep\n")
+        tmp_pol_path = tmp_pol.name
+    try:
+        pol_loaded = load_policy(tmp_pol_path)
+        chk("load_policy ignores CVE-2023-8888", pol_loaded.is_ignored("CVE-2023-8888", "some-pkg")[0], True)
+        chk("load_policy ignores package bad-dep", pol_loaded.is_ignored("CVE-2023-0000", "bad-dep")[0], True)
+    finally:
+        try:
+            os.unlink(tmp_pol_path)
+        except OSError:
+            pass
+    print()
+
+    # ── Phase 3: Extended Framework AST Detectors ──────────────────────────────────
+    print("=== Phase 3: Extended Framework AST Detectors ===")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        code_file = Path(tmp_dir) / "app.py"
+        code_file.write_text("""
+import click
+from django.views import View
+
+@click.command()
+def cli_entry():
+    pass
+
+class MyView(View):
+    def get(self, request):
+        pass
+""", encoding="utf-8")
+
+        eps_extended = find_entry_points(tmp_dir)
+        chk("find_entry_points detects click @command", any("cli_entry" in ep for ep in eps_extended), True)
+        chk("find_entry_points detects Django CBV MyView.get", any("MyView.get" in ep for ep in eps_extended), True)
     print()
 
     # ── Summary ───────────────────────────────────────────────────────────────────
@@ -368,3 +447,4 @@ def run_all_tests():
 
 if __name__ == "__main__":
     run_all_tests()
+

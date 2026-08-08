@@ -1,25 +1,34 @@
 """Entry point detection for Python repositories.
 
-Walks a directory tree and identifies functions that act as program
-entry points, including:
+Walks a directory tree and identifies functions and class methods that act
+as program entry points, including:
   - ``if __name__ == '__main__'`` blocks
-  - Flask / FastAPI / Starlette route-decorated functions
-  - Django path/re_path/url view decorators
+  - Flask / FastAPI / Starlette route-decorated functions & event handlers
+  - Django path/re_path/url view decorators & Class-Based Views (CBVs)
+  - Click & Typer CLI commands (@click.command, @app.command)
   - Celery @task and @shared_task decorated functions
 """
 
 import ast
 import os
 
-# HTTP-method and routing keywords used by Flask, FastAPI, Starlette, Django, etc.
+# HTTP-method, routing, CLI, and task keywords used across major Python frameworks
 _ROUTE_KEYWORDS: frozenset[str] = frozenset({
-    "route",
-    "get", "post", "put", "delete", "patch", "head", "options",
-    "websocket",
+    # Flask / FastAPI / Starlette routes & event handlers
+    "route", "get", "post", "put", "delete", "patch", "head", "options",
+    "websocket", "on_event", "lifespan",
     # Django URL patterns
     "path", "re_path", "url",
-    # Celery tasks
+    # Click & Typer CLI decorators
+    "command", "group", "cli",
+    # Celery background tasks
     "task", "shared_task",
+})
+
+# Base class names for Django / DRF Class-Based Views (CBVs)
+_DJANGO_CBV_BASES: frozenset[str] = frozenset({
+    "View", "APIView", "ModelViewSet", "GenericAPIView", "ReadOnlyModelViewSet",
+    "CreateAPIView", "ListAPIView", "RetrieveAPIView", "UpdateAPIView", "DestroyAPIView",
 })
 
 
@@ -27,8 +36,7 @@ def find_entry_points(repo_path: str) -> list[str]:
     """Return a list of qualified entry point identifiers found under *repo_path*.
 
     Each entry is a string of the form ``<filepath>::<name>`` where *name*
-    is either ``__main__`` (for a top-level ``if __name__ == '__main__'``
-    block) or the decorated function name.
+    is either ``__main__``, the decorated function name, or a CBV method.
 
     Args:
         repo_path: Absolute or relative path to the root of the repository
@@ -72,14 +80,10 @@ def find_entry_points(repo_path: str) -> list[str]:
                             seen.add(ep)
                             entry_points.append(ep)
 
-                # -- Web-framework route decorators ---------------------------
-                # Matches Flask (@app.route, @bp.route),
-                # FastAPI/Starlette (@app.get, @router.post, ...),
-                # Django (@path, @re_path), Celery (@task, @shared_task), etc.
+                # -- Web & CLI Framework Decorators ---------------------------
+                # Matches Flask, FastAPI, Starlette, Django, Click, Typer, Celery
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for decorator in node.decorator_list:
-                        # Extract the attribute name (e.g. "route" from app.route)
-                        # or the plain Name (e.g. "task") from the decorator AST.
                         dec_name: str | None = None
                         if isinstance(decorator, ast.Attribute):
                             dec_name = decorator.attr
@@ -97,7 +101,26 @@ def find_entry_points(repo_path: str) -> list[str]:
                             if ep not in seen:
                                 seen.add(ep)
                                 entry_points.append(ep)
-                            # Record once per function even with multiple decorators.
                             break
+
+                # -- Django Class-Based Views (CBVs) --------------------------
+                if isinstance(node, ast.ClassDef):
+                    # Check if class inherits from known View / APIView bases
+                    base_names = set()
+                    for base in node.bases:
+                        if isinstance(base, ast.Name):
+                            base_names.add(base.id)
+                        elif isinstance(base, ast.Attribute):
+                            base_names.add(base.attr)
+
+                    if base_names & _DJANGO_CBV_BASES:
+                        # Extract HTTP handler methods (get, post, put, delete, dispatch)
+                        for item in node.body:
+                            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                if item.name in ("get", "post", "put", "delete", "patch", "dispatch", "handle"):
+                                    ep = f"{filepath}::{node.name}.{item.name}"
+                                    if ep not in seen:
+                                        seen.add(ep)
+                                        entry_points.append(ep)
 
     return entry_points

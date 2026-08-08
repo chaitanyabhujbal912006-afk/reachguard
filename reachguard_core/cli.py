@@ -33,6 +33,8 @@ from reachguard_core.reachability import (
 )
 from reachguard_core.sarif import write_sarif_output
 from reachguard_core.html_report import write_html_report
+from reachguard_core.sbom import write_sbom_output
+from reachguard_core.policy import load_policy
 
 app = typer.Typer(
     help="ReachGuard 🛡️ — Refined. Secure. Connected. Reachability-aware dependency vulnerability scanner",
@@ -170,6 +172,7 @@ def scan(
     requirements_path: str,
     src_path: str | None = None,
     call_graph_path: str | None = None,
+    config_path: str | None = None,
 ) -> list[Finding]:
     """Run a full ReachGuard scan and return the findings list.
 
@@ -178,6 +181,7 @@ def scan(
         src_path: Optional path to repo source directory.  If provided and
             *call_graph_path* is not, PyCG is invoked automatically (A4).
         call_graph_path: Optional path to a pre-built PyCG call graph JSON.
+        config_path: Optional path to .reachguardignore / reachguard.toml / pyproject.toml policy file.
 
     Returns:
         List of ``(name, version, cve_id, summary, status, severity)`` tuples
@@ -190,6 +194,8 @@ def scan(
         f"[cyan]{requirements_path}[/cyan] — "
         f"[bold]{len(deps)}[/bold] pinned dependencies\n"
     )
+
+    policy = load_policy(config_path)
 
     # 2. Build / load call graph & detect entry points ---------------------
     call_graph: dict = {}
@@ -218,6 +224,7 @@ def scan(
 
     # 3. Query OSV & check reachability with progress bar (B2) ------------
     findings: list[Finding] = []
+    ignored_count = 0
 
     with Progress(
         SpinnerColumn(),
@@ -238,12 +245,20 @@ def scan(
                 severity      = _get_severity(vuln)
                 fixed_version = extract_fixed_version(vuln)
 
+                is_suppressed, reason = policy.is_ignored(cve_id, name)
+                if is_suppressed:
+                    ignored_count += 1
+                    continue
+
                 if have_graph:
                     status, call_path = check_reachability_details(call_graph, entry_points, vuln)
                 else:
                     status, call_path = ReachabilityStatus.UNKNOWN, None
 
                 findings.append((name, version, cve_id, summary, status, severity, call_path, fixed_version))
+
+    if ignored_count > 0:
+        console.print(f"[dim]Policy suppression:[/dim] [yellow]{ignored_count} vulnerability rule(s) ignored by policy.[/yellow]\n")
 
     # 4. Sort: REACHABLE first, UNKNOWN second, UNREACHABLE last ----------
     findings.sort(key=lambda row: _RANK[row[4]])
@@ -403,6 +418,16 @@ def main_cmd(
         "--output-html",
         help="Write an interactive HTML dashboard report to this file.",
     ),
+    output_sbom: str = typer.Option(
+        None,
+        "--output-sbom",
+        help="Write findings as CycloneDX v1.5 JSON SBOM to this file.",
+    ),
+    config: str = typer.Option(
+        None,
+        "--config", "-c",
+        help="Path to policy suppression config file (.reachguardignore / reachguard.toml).",
+    ),
     version: bool = typer.Option(
         False,
         "--version", "-V",
@@ -412,7 +437,7 @@ def main_cmd(
     ),
 ) -> None:
     """Scan dependencies for CVEs and rank by reachability."""
-    findings = scan(requirements_path, src_path=src, call_graph_path=call_graph)
+    findings = scan(requirements_path, src_path=src, call_graph_path=call_graph, config_path=config)
 
     if findings:
         print_report(findings, suggest_fixes=suggest_fixes)
@@ -424,6 +449,10 @@ def main_cmd(
         if output_html:
             write_html_report(findings, output_html, requirements_path=requirements_path)
             console.print(f"\n[dim]HTML report written to:[/dim] [cyan]{output_html}[/cyan]")
+        if output_sbom:
+            deps = parse_deps(requirements_path)
+            write_sbom_output(findings, deps, output_sbom, requirements_path=requirements_path)
+            console.print(f"\n[dim]CycloneDX SBOM report written to:[/dim] [cyan]{output_sbom}[/cyan]")
         if fail_on_reachable:
             n = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
             if n:

@@ -146,6 +146,41 @@ def parse_pipfile_lock(filepath: str) -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# poetry.lock (TOML, not JSON)
+# ---------------------------------------------------------------------------
+
+def parse_poetry_lock(filepath: str) -> list[tuple[str, str]]:
+    """Parse exact-pinned packages from a ``poetry.lock`` TOML file.
+
+    Poetry lock files are TOML documents containing ``[[package]]`` sections,
+    each with a ``name`` and ``version`` key.  This is completely different
+    from Pipfile.lock (which is JSON) — attempting to read poetry.lock via
+    :func:`parse_pipfile_lock` would raise a ``json.JSONDecodeError``.
+    """
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ImportError:
+            return []   # No TOML parser available — skip silently.
+
+    try:
+        with open(filepath, "rb") as fh:
+            data = tomllib.load(fh)
+    except Exception:
+        return []
+
+    deps: list[tuple[str, str]] = []
+    for pkg in data.get("package", []):
+        name = pkg.get("name", "")
+        version = pkg.get("version", "")
+        if name and version:
+            deps.append((_normalise_name(name), version))
+    return deps
+
+
+# ---------------------------------------------------------------------------
 # Unified entry point
 # ---------------------------------------------------------------------------
 
@@ -157,13 +192,16 @@ def parse_deps(filepath: str) -> list[tuple[str, str]]:
     - ``*requirements*.txt`` → :func:`parse_requirements`
     - ``pyproject.toml``     → :func:`parse_pyproject`
     - ``Pipfile.lock``       → :func:`parse_pipfile_lock`
+    - ``poetry.lock``        → :func:`parse_poetry_lock`
     - anything else          → tries :func:`parse_requirements` as fallback
     """
     name = Path(filepath).name.lower()
     if name == "pyproject.toml":
         return parse_pyproject(filepath)
-    if name.endswith(".lock"):           # Pipfile.lock, poetry.lock, etc.
+    if name == "pipfile.lock":
         return parse_pipfile_lock(filepath)
+    if name == "poetry.lock":
+        return parse_poetry_lock(filepath)
     # Default: requirements.txt (and pip-compile variants)
     return parse_requirements(filepath)
 

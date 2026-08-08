@@ -1,8 +1,14 @@
 """OSV.dev API integration module."""
 
+import sys
 import requests
 
 OSV_URL = "https://api.osv.dev/v1/query"
+
+
+def _warn(msg: str) -> None:
+    """Print a yellow-tinted warning to stderr (Rich not required)."""
+    print(f"[OSV warning] {msg}", file=sys.stderr)
 
 def query_cves(package_name: str, version: str, ecosystem: str = "PyPI") -> list[dict]:
     """Queries OSV.dev REST API for vulnerabilities for a given package and version."""
@@ -15,7 +21,17 @@ def query_cves(package_name: str, version: str, ecosystem: str = "PyPI") -> list
         response.raise_for_status()
         data = response.json()
         return data.get("vulns", [])
-    except Exception as e:
+    except requests.exceptions.Timeout:
+        _warn(f"{package_name}=={version}: OSV request timed out after 10 s")
+        return []
+    except requests.exceptions.HTTPError as exc:
+        _warn(f"{package_name}=={version}: OSV HTTP error {exc.response.status_code}")
+        return []
+    except requests.exceptions.ConnectionError as exc:
+        _warn(f"{package_name}=={version}: OSV connection error — {str(exc)[:80]}")
+        return []
+    except Exception as exc:
+        _warn(f"{package_name}=={version}: unexpected OSV error — {str(exc)[:80]}")
         return []
 
 

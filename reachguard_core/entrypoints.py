@@ -1,13 +1,26 @@
-﻿"""Entry point detection for Python repositories.
+"""Entry point detection for Python repositories.
 
 Walks a directory tree and identifies functions that act as program
 entry points, including:
   - ``if __name__ == '__main__'`` blocks
   - Flask / FastAPI / Starlette route-decorated functions
+  - Django path/re_path/url view decorators
+  - Celery @task and @shared_task decorated functions
 """
 
 import ast
 import os
+
+# HTTP-method and routing keywords used by Flask, FastAPI, Starlette, Django, etc.
+_ROUTE_KEYWORDS: frozenset[str] = frozenset({
+    "route",
+    "get", "post", "put", "delete", "patch", "head", "options",
+    "websocket",
+    # Django URL patterns
+    "path", "re_path", "url",
+    # Celery tasks
+    "task", "shared_task",
+})
 
 
 def find_entry_points(repo_path: str) -> list[str]:
@@ -22,10 +35,10 @@ def find_entry_points(repo_path: str) -> list[str]:
             (or any directory of Python source files) to scan.
 
     Returns:
-        A list of entry point strings, potentially with duplicates if a
-        function has more than one qualifying decorator.
+        A deduplicated list of entry point strings.
     """
     entry_points: list[str] = []
+    seen: set[str] = set()
 
     for root, _dirs, files in os.walk(repo_path):
         for filename in files:
@@ -54,19 +67,36 @@ def find_entry_points(repo_path: str) -> list[str]:
                         and isinstance(test.comparators[0], ast.Constant)
                         and test.comparators[0].value == "__main__"
                     ):
-                        entry_points.append(f"{filepath}::__main__")
+                        ep = f"{filepath}::__main__"
+                        if ep not in seen:
+                            seen.add(ep)
+                            entry_points.append(ep)
 
                 # -- Web-framework route decorators ---------------------------
                 # Matches Flask (@app.route, @bp.route),
-                # FastAPI/Starlette (@app.get, @router.post, ...), etc.
+                # FastAPI/Starlette (@app.get, @router.post, ...),
+                # Django (@path, @re_path), Celery (@task, @shared_task), etc.
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for decorator in node.decorator_list:
-                        dec_str = ast.dump(decorator)
-                        if any(
-                            kw in dec_str
-                            for kw in ("route", "get", "post", "put", "delete", "patch", "websocket")
-                        ):
-                            entry_points.append(f"{filepath}::{node.name}")
+                        # Extract the attribute name (e.g. "route" from app.route)
+                        # or the plain Name (e.g. "task") from the decorator AST.
+                        dec_name: str | None = None
+                        if isinstance(decorator, ast.Attribute):
+                            dec_name = decorator.attr
+                        elif isinstance(decorator, ast.Name):
+                            dec_name = decorator.id
+                        elif isinstance(decorator, ast.Call):
+                            func = decorator.func
+                            if isinstance(func, ast.Attribute):
+                                dec_name = func.attr
+                            elif isinstance(func, ast.Name):
+                                dec_name = func.id
+
+                        if dec_name and dec_name in _ROUTE_KEYWORDS:
+                            ep = f"{filepath}::{node.name}"
+                            if ep not in seen:
+                                seen.add(ep)
+                                entry_points.append(ep)
                             # Record once per function even with multiple decorators.
                             break
 

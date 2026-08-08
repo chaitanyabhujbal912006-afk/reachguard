@@ -10,6 +10,7 @@ End-to-end workflow:
   7. Optionally write machine-readable JSON via --output-json.
 """
 
+import importlib.metadata
 import json
 import os
 import subprocess
@@ -87,8 +88,15 @@ def _build_call_graph(src_path: str) -> dict:
             console.print(
                 f"[yellow]PyCG warning:[/yellow] {result.stderr.strip()[:200] or 'non-zero exit'}"
             )
-        with open(tmp_path, encoding="utf-8") as fh:
-            return json.load(fh)
+        try:
+            with open(tmp_path, encoding="utf-8") as fh:
+                return json.load(fh)
+        except (FileNotFoundError, json.JSONDecodeError) as parse_exc:
+            console.print(
+                f"[yellow]PyCG output unreadable ({parse_exc.__class__.__name__}) — "
+                "skipping call graph.[/yellow]"
+            )
+            return {}
     except FileNotFoundError:
         console.print("[yellow]PyCG not found — install with: pip install pycg[/yellow]")
         return {}
@@ -344,6 +352,16 @@ def write_json_output(findings: list[Finding], path: str) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+def _version_callback(value: bool) -> None:
+    if value:
+        try:
+            ver = importlib.metadata.version("reachguard")
+        except importlib.metadata.PackageNotFoundError:
+            from reachguard_core import __version__ as ver  # type: ignore[assignment]
+        console.print(f"ReachGuard [bold cyan]{ver}[/bold cyan]")
+        raise typer.Exit()
+
+
 @app.command()
 def main_cmd(
     requirements_path: str = typer.Argument(
@@ -384,6 +402,13 @@ def main_cmd(
         None,
         "--output-html",
         help="Write an interactive HTML dashboard report to this file.",
+    ),
+    version: bool = typer.Option(
+        False,
+        "--version", "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Print ReachGuard version and exit.",
     ),
 ) -> None:
     """Scan dependencies for CVEs and rank by reachability."""

@@ -24,13 +24,13 @@ from pathlib import Path
 
 def _resolve_installed_version(pkg_name: str) -> str | None:
     """Return the installed version of *pkg_name* via importlib.metadata, or None."""
-    try:
-        return importlib.metadata.version(pkg_name)
-    except Exception:
+    for name in (pkg_name, pkg_name.replace("-", "_"), pkg_name.replace("_", "-")):
         try:
-            return importlib.metadata.version(pkg_name.replace("-", "_"))
-        except Exception:
-            return None
+            return importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    return None
+
 
 
 def parse_installed_environment() -> list[tuple[str, str]]:

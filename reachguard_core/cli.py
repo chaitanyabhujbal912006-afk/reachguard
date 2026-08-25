@@ -33,7 +33,9 @@ from rich.table import Table
 from reachguard_core import __version__
 from reachguard_core.cache import OsvCache
 from reachguard_core.deps import find_dependency_file, parse_deps
+from reachguard_core.diff import GitDiffScanner
 from reachguard_core.entrypoints import find_entry_points
+from reachguard_core.epss import calculate_risk_score, fetch_epss_scores
 from reachguard_core.html_report import write_html_report
 from reachguard_core.import_scanner import ImportScanner
 from reachguard_core.logger import configure_logging, get_logger
@@ -660,6 +662,16 @@ def main_cmd(
         "--log-format",
         help="Log format: 'plain' (default) or 'json' (for SIEM/Splunk).",
     ),
+    epss: bool = typer.Option(
+        False,
+        "--epss",
+        help="Fetch EPSS exploit probability scores from first.org API and display risk rating.",
+    ),
+    diff: str = typer.Option(
+        None,
+        "--diff",
+        help="Git base reference branch (e.g. 'main') for PR incremental reachability scanning.",
+    ),
     version: bool = typer.Option(
         False,
         "--version", "-V",
@@ -712,6 +724,26 @@ def main_cmd(
             max_workers=max_workers,
             verbose=verbose,
         )
+
+        # ── Git diff filtering (--diff main) ──────────────────────────────────
+        if diff and findings:
+            console.print(f"[blue]Filtering findings against git diff ({diff}…HEAD)…[/blue]\n")
+            diff_scanner = GitDiffScanner(base_ref=diff, cwd=src or ".")
+            findings = diff_scanner.filter_findings_by_diff(findings)
+
+        # ── EPSS exploit probability scores (--epss) ──────────────────────────
+        if epss and findings:
+            cve_ids = [row[2] for row in findings]
+            epss_map = fetch_epss_scores(cve_ids)
+            if epss_map:
+                console.print(f"[blue]EPSS scores loaded:[/blue] {len(epss_map)} CVE(s) rated\n")
+                # Append EPSS risk score to findings in verbose/terminal output
+                for i, row in enumerate(findings):
+                    cve = row[2]
+                    e_score = epss_map.get(cve, 0.0)
+                    r_score = calculate_risk_score(row[4], row[5], e_score)
+                    log.debug("EPSS score for %s: epss=%.4f, composite_risk=%.3f", cve, e_score, r_score)
+
     except typer.Exit:
         raise
     except Exception as exc:

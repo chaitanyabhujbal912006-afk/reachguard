@@ -91,6 +91,8 @@ requirements.txt contains werkzeug==2.3.3 (CVE in parse_multipart):
 | 📊 **Rich Outputs** | Table, JSON, SARIF v2.1.0, HTML dashboard, CycloneDX v1.5 SBOM |
 | 🪝 **Pre-Commit Hook** | Block commits if REACHABLE CVEs are found |
 | 🤖 **GitHub Action** | Built-in action + CI workflow with auto-PyPI publish |
+| 📈 **EPSS Scoring** | `--epss` fetches exploit probability scores from `first.org` API |
+| ⚡ **PR Diff Scanning** | `--diff main` scans only code modified in a Pull Request |
 | 📋 **Policy Engine** | `.reachguardignore` / `reachguard.toml` to suppress false positives |
 | 🔧 **Auto-Remediation** | `--suggest-fixes` shows exact `pip install pkg>=fixed_version` commands |
 
@@ -142,6 +144,16 @@ reachguard . --src . --fail-on-reachable
 ### Filter noise — only show HIGH+ severity findings that are reachable
 ```bash
 reachguard . --src . --min-severity HIGH --only-reachable
+```
+
+### PR Incremental Scanning (scan only modified code in a Pull Request)
+```bash
+reachguard . --src . --diff main
+```
+
+### EPSS Exploit Probability Scoring (fetch scores from first.org)
+```bash
+reachguard . --src . --epss
 ```
 
 ### Speed up with caching and more workers
@@ -336,7 +348,7 @@ ignore_packages = ["dev-only-tool"]
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run all 46 tests
+# Run all 61 tests
 python -m pytest tests/ -v
 
 # With coverage report
@@ -344,12 +356,14 @@ python -m pytest tests/ --cov=reachguard_core --cov-report=term-missing
 ```
 
 **Test coverage includes:**
-- Cache TTL, hit/miss, corruption handling
-- Import scanner: aliases, .venv skipping, syntax errors
-- OSV: mocked HTTP, retry logic, batch queries
+- EPSS API fetching & composite risk score calculation (`test_epss.py`)
+- GitDiffScanner PR modified function extraction (`test_diff.py`)
+- Cache TTL, hit/miss, corruption handling (`test_cache.py`)
+- Import scanner: aliases, .venv skipping, syntax errors (`test_import_scanner.py`)
+- OSV: mocked HTTP, retry logic, batch queries (`test_osv.py`)
 - Reachability: BFS traversal, noise filtering, suffix matching
-- CLI: HTML output, SBOM, SARIF, policy suppression
-- Dependency parsers: `uv.lock`, `pdm.lock`, recursive `-r` includes
+- CLI: HTML output, SBOM, SARIF, policy suppression, severity parsing (`test_cli.py`)
+- Dependency parsers: `uv.lock`, `pdm.lock`, recursive `-r` includes (`test_suite.py`)
 
 ---
 

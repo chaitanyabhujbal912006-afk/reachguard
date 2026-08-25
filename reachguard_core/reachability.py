@@ -34,6 +34,7 @@ them before they reach the BFS.
 
 import os
 import re
+from collections import deque
 from enum import Enum
 
 from reachguard_core.logger import get_logger
@@ -123,9 +124,7 @@ def _is_noise_target(name: str) -> bool:
             return True
     # Plain template filter names
     bare = name.rsplit(".", 1)[-1]
-    if bare in _TEMPLATE_NOISE:
-        return True
-    return False
+    return bare in _TEMPLATE_NOISE
 
 
 def _extract_names_from_text(text: str) -> list[str]:
@@ -219,8 +218,7 @@ def _ep_to_cg_prefix(ep: str) -> str:
     """
     file_path = ep.rsplit("::", 1)[0]          # '../test-target/src/flask/cli.py'
     norm = file_path.replace("/", _SEP).replace("\\\\", _SEP)
-    if norm.endswith(".py"):
-        norm = norm[:-3]                        # strip .py
+    norm = norm.removesuffix(".py")                        # strip .py
     parts = [p for p in norm.split(_SEP) if p not in ("..", ".", "")]
     # Heuristic: start from the 'src' directory if present, else last 3 parts.
     try:
@@ -332,8 +330,6 @@ def _node_matches_target(cg_key: str, target: str) -> bool:
 # ---------------------------------------------------------------------------
 # BFS reachability check (uses A1 + A2 fixes)
 # ---------------------------------------------------------------------------
-
-from collections import deque
 
 
 def find_reachability_path(

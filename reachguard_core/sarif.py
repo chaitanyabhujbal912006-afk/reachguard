@@ -1,6 +1,7 @@
 """SARIF v2.1.0 exporter for GitHub Code Scanning and IDE integration."""
 
 import json
+
 from reachguard_core import __version__
 from reachguard_core.reachability import ReachabilityStatus
 

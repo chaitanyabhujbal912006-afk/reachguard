@@ -10,7 +10,6 @@ with optional expiration dates and audit notes.
 
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 
 try:
     import tomllib  # Python 3.11+
@@ -114,7 +113,7 @@ def _parse_dot_ignore(filepath: Path, policy: ReachGuardPolicy) -> None:
                 parts = line.split("#", 1)
                 token = parts[0].strip()
                 reason = parts[1].strip() if len(parts) > 1 else "Ignored via .reachguardignore"
-                if token.startswith("CVE-") or token.startswith("GHSA-") or token.startswith("PYSEC-"):
+                if token.startswith(("CVE-", "GHSA-", "PYSEC-")):
                     policy.add_ignore_id(token, reason=reason)
                 else:
                     policy.add_ignore_package(token)

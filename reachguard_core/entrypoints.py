@@ -15,7 +15,6 @@ as program entry points, including:
 
 import ast
 import os
-from pathlib import Path
 
 from reachguard_core.logger import get_logger
 
@@ -93,7 +92,7 @@ def find_entry_points(repo_path: str) -> list[str]:
                 _add(f"{filepath}::__main__")
 
             try:
-                with open(filepath, "r", encoding="utf-8", errors="ignore") as fh:
+                with open(filepath, encoding="utf-8", errors="ignore") as fh:
                     source = fh.read()
                 tree = ast.parse(source, filename=filepath)
             except (SyntaxError, UnicodeDecodeError, OSError) as exc:

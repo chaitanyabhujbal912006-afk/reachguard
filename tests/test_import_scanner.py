@@ -3,10 +3,7 @@
 import textwrap
 from pathlib import Path
 
-import pytest
-
-from reachguard_core.import_scanner import ImportScanner, _normalise, _map_import_to_pkg
-
+from reachguard_core.import_scanner import ImportScanner, _map_import_to_pkg, _normalise
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

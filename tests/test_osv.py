@@ -1,12 +1,10 @@
 """Tests for the OSV module with mocked HTTP responses."""
 
-import json
 
-import pytest
 import responses as responses_lib
 
-from reachguard_core.osv import query_cves, query_cves_batch, extract_fixed_version
 from reachguard_core.cache import OsvCache
+from reachguard_core.osv import extract_fixed_version, query_cves, query_cves_batch
 
 OSV_URL = "https://api.osv.dev/v1/query"
 

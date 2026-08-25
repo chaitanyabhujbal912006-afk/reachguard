@@ -4,6 +4,8 @@ Supports both pytest auto-discovery (via test_* functions) and direct script exe
     python tests/test_suite.py
 """
 
+# ruff: noqa: E402
+
 import json
 import os
 import sys
@@ -15,29 +17,25 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(str(PROJECT_ROOT))
 
+import reachguard_core.cli as m  # noqa: E402
 from reachguard_core.deps import (
-    parse_deps,
     _normalise_name,
     find_dependency_file,
-    parse_requirements,
-    parse_poetry_lock,
-    parse_uv_lock,
+    parse_deps,
     parse_pdm_lock,
+    parse_requirements,
+    parse_uv_lock,
 )
 from reachguard_core.entrypoints import find_entry_points
 from reachguard_core.reachability import (
     ReachabilityStatus,
-    _cg_key_name_forms,
     _is_noise_target,
     _node_matches_target,
     _seed_from_entry_points,
-    _target_name_forms,
     extract_vulnerable_functions,
     find_reachability_path,
-    check_reachability_details,
     is_reachable,
 )
-import reachguard_core.cli as m
 
 failures = []
 
@@ -286,7 +284,7 @@ def test_cli_output_html():
 def test_cyclonedx_sbom_exporter():
     """Phase 3: CycloneDX SBOM Exporter."""
     print("=== Phase 3: CycloneDX SBOM Exporter ===")
-    from reachguard_core.sbom import generate_cyclonedx_sbom, write_sbom_output
+    from reachguard_core.sbom import generate_cyclonedx_sbom
 
     sample_deps = [("flask", "2.3.0"), ("jinja2", "3.1.2")]
     sample_findings_sbom = [
@@ -300,7 +298,7 @@ def test_cyclonedx_sbom_exporter():
 def test_policy_suppression():
     """Phase 3: Policy Suppression Engine."""
     print("=== Phase 3: Policy Suppression Engine ===")
-    from reachguard_core.policy import ReachGuardPolicy, load_policy
+    from reachguard_core.policy import ReachGuardPolicy
 
     pol = ReachGuardPolicy()
     pol.add_ignore_id("CVE-2023-1111", reason="False positive")

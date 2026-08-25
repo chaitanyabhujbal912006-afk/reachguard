@@ -7,6 +7,7 @@ Produces a single-file, self-contained HTML report with:
   - Zero external runtime dependencies (Chart.js loaded via CDN with inline fallback).
 """
 
+import base64
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -682,7 +683,6 @@ document.addEventListener("DOMContentLoaded", () => {{
 # Public API
 # ---------------------------------------------------------------------------
 
-import base64
 
 def _get_logo_img_tag() -> str:
     """Return an HTML <img> tag embedding base64 logo.png if present."""

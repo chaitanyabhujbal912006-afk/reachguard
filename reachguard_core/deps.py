@@ -13,11 +13,10 @@ ReachGuard automatically discovers dependency files in root or subdirectories
 (e.g., ``src/requirements.txt``), falling back to installed packages if needed.
 """
 
+import importlib.metadata
 import json
 import re
-import importlib.metadata
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Installed package resolver
@@ -88,7 +87,7 @@ def parse_requirements(filepath: str, _visited: set[str] | None = None) -> list[
                 continue
 
             # Handle recursive -r / --requirement includes
-            if line.startswith("-r ") or line.startswith("--requirement "):
+            if line.startswith(("-r ", "--requirement ")):
                 inc_target = line.split(maxsplit=1)[1].strip()
                 inc_path = base_dir / inc_target
                 if inc_path.exists():

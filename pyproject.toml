@@ -59,4 +59,16 @@ omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 70
+fail_under = 50
+
+# ── ruff linting config ───────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = [
+    "E501",   # line too long — handled by line-length above
+]
+

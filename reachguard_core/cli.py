@@ -19,26 +19,32 @@ import tempfile
 from pathlib import Path
 
 import typer
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
-from rich.table import Table
 from rich import box
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.table import Table
 
 from reachguard_core import __version__
-from reachguard_core.logger import configure_logging, get_logger
 from reachguard_core.cache import OsvCache
-from reachguard_core.deps import parse_deps, find_dependency_file
-from reachguard_core.osv import query_cves_batch, extract_fixed_version
+from reachguard_core.deps import find_dependency_file, parse_deps
 from reachguard_core.entrypoints import find_entry_points
+from reachguard_core.html_report import write_html_report
 from reachguard_core.import_scanner import ImportScanner
+from reachguard_core.logger import configure_logging, get_logger
+from reachguard_core.osv import extract_fixed_version, query_cves_batch
+from reachguard_core.policy import load_policy
 from reachguard_core.reachability import (
     ReachabilityStatus,
     check_reachability_details,
 )
 from reachguard_core.sarif import write_sarif_output
-from reachguard_core.html_report import write_html_report
 from reachguard_core.sbom import write_sbom_output
-from reachguard_core.policy import load_policy
 
 app = typer.Typer(
     help="ReachGuard 🛡️ — Refined. Secure. Connected. Reachability-aware dependency vulnerability scanner",
@@ -255,7 +261,7 @@ def scan(
     """
     # ── Auto-discover dependency file ────────────────────────────────────────
     try:
-        dep_file, dep_fmt = find_dependency_file(requirements_path)
+        dep_file, _dep_fmt = find_dependency_file(requirements_path)
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] Could not find dependency file — {exc}")
         log.error("Dependency file discovery failed: %s", exc, exc_info=True)

@@ -1,12 +1,10 @@
 """Tests for the OSV cache module."""
 
-import json
 import time
 
 import pytest
 
 from reachguard_core.cache import OsvCache
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

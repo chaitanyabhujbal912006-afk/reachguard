@@ -14,21 +14,24 @@ import os
 
 # HTTP-method, routing, CLI, and task keywords used across major Python frameworks
 _ROUTE_KEYWORDS: frozenset[str] = frozenset({
-    # Flask / FastAPI / Starlette routes & event handlers
+    # Flask / FastAPI / Starlette / Litestar / Bottle routes & event handlers
     "route", "get", "post", "put", "delete", "patch", "head", "options",
-    "websocket", "on_event", "lifespan",
+    "websocket", "on_event", "lifespan", "endpoint", "handler",
     # Django URL patterns
     "path", "re_path", "url",
     # Click & Typer CLI decorators
     "command", "group", "cli",
     # Celery background tasks
     "task", "shared_task",
+    # Tornado / Aiohttp web handlers
+    "prepare", "initialize", "web",
 })
 
-# Base class names for Django / DRF Class-Based Views (CBVs)
+# Base class names for Django / DRF / Tornado / Aiohttp Class-Based Views
 _DJANGO_CBV_BASES: frozenset[str] = frozenset({
     "View", "APIView", "ModelViewSet", "GenericAPIView", "ReadOnlyModelViewSet",
     "CreateAPIView", "ListAPIView", "RetrieveAPIView", "UpdateAPIView", "DestroyAPIView",
+    "RequestHandler", "ViewHandler",
 })
 
 

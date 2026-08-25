@@ -8,9 +8,9 @@ branding:
 
 inputs:
   requirements:
-    description: 'Path to requirements.txt, pyproject.toml, or Pipfile.lock'
+    description: 'Path to requirements.txt, pyproject.toml, lockfile, or project directory'
     required: false
-    default: 'requirements.txt'
+    default: '.'
   src:
     description: 'Path to source code directory for call graph generation and entry point mining'
     required: false

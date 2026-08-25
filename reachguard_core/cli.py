@@ -24,7 +24,7 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 from rich.table import Table
 from rich import box
 
-from reachguard_core.deps import parse_deps
+from reachguard_core.deps import parse_deps, find_dependency_file
 from reachguard_core.osv import query_cves, query_cves_batch, extract_fixed_version
 from reachguard_core.entrypoints import find_entry_points
 from reachguard_core.reachability import (
@@ -38,7 +38,7 @@ from reachguard_core.policy import load_policy
 
 app = typer.Typer(
     help="ReachGuard 🛡️ — Refined. Secure. Connected. Reachability-aware dependency vulnerability scanner",
-    no_args_is_help=True,
+    no_args_is_help=False,
 )
 console = Console()
 
@@ -70,18 +70,63 @@ _SEVERITY_STYLE = {
 # A4 — auto-invoke PyCG
 # ---------------------------------------------------------------------------
 
+def _find_pycg_cmd(src_path: str) -> list[str] | None:
+    """Locate executable command list for PyCG across python interpreters and venvs."""
+    # 1. Active sys.executable
+    try:
+        res = subprocess.run([sys.executable, "-m", "pycg", "--help"], capture_output=True, text=True, timeout=5)
+        if res.returncode == 0:
+            return [sys.executable, "-m", "pycg"]
+    except Exception:
+        pass
+
+    # 2. Local virtual environments in cwd or src_path
+    candidates = [
+        Path.cwd() / "venv" / "Scripts" / "python.exe",
+        Path.cwd() / "venv" / "bin" / "python",
+        Path.cwd() / ".venv" / "Scripts" / "python.exe",
+        Path.cwd() / ".venv" / "bin" / "python",
+        Path(src_path) / "venv" / "Scripts" / "python.exe",
+        Path(src_path) / "venv" / "bin" / "python",
+        Path(src_path) / ".venv" / "Scripts" / "python.exe",
+        Path(src_path) / ".venv" / "bin" / "python",
+    ]
+    for venv_py in candidates:
+        if venv_py.is_file():
+            try:
+                res = subprocess.run([str(venv_py), "-m", "pycg", "--help"], capture_output=True, text=True, timeout=5)
+                if res.returncode == 0:
+                    return [str(venv_py), "-m", "pycg"]
+            except Exception:
+                pass
+
+    # 3. System PATH pycg executable
+    import shutil
+    pycg_bin = shutil.which("pycg")
+    if pycg_bin:
+        return [pycg_bin]
+
+    return None
+
+
 def _build_call_graph(src_path: str) -> dict:
     """Run PyCG against *src_path* and return the resulting call graph dict.
 
-    Invokes ``python -m pycg --package <src_path> -o <tmp.json>``.
+    Invokes PyCG with package auto-detection across local environments.
     Returns an empty dict (silently) if PyCG is not installed or fails.
     """
+    pycg_cmd = _find_pycg_cmd(src_path)
+    if not pycg_cmd:
+        console.print("[yellow]PyCG not found — install with: pip install pycg[/yellow]")
+        return {}
+
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
+        cmd = pycg_cmd + ["--package", src_path, "-o", tmp_path]
         result = subprocess.run(
-            [sys.executable, "-m", "pycg", "--package", src_path, "-o", tmp_path],
+            cmd,
             capture_output=True,
             text=True,
             timeout=120,
@@ -169,7 +214,7 @@ Finding = tuple[str, str, str, str, ReachabilityStatus, str, list[str] | None, s
 
 
 def scan(
-    requirements_path: str,
+    requirements_path: str | None = None,
     src_path: str | None = None,
     call_graph_path: str | None = None,
     config_path: str | None = None,
@@ -177,22 +222,36 @@ def scan(
     """Run a full ReachGuard scan and return the findings list.
 
     Args:
-        requirements_path: Path to requirements.txt / pyproject.toml / Pipfile.lock.
-        src_path: Optional path to repo source directory.  If provided and
-            *call_graph_path* is not, PyCG is invoked automatically (A4).
+        requirements_path: Optional path to requirements file, pyproject.toml, lockfile,
+            or project directory. Defaults to auto-discovering in current directory.
+        src_path: Optional path to repo source directory. If provided and
+            *call_graph_path* is not, PyCG is invoked automatically.
         call_graph_path: Optional path to a pre-built PyCG call graph JSON.
-        config_path: Optional path to .reachguardignore / reachguard.toml / pyproject.toml policy file.
+        config_path: Optional path to policy file (.reachguardignore / reachguard.toml).
 
     Returns:
         List of ``(name, version, cve_id, summary, status, severity)`` tuples
         sorted by reachability rank (most dangerous first).
     """
+    # Auto-discover dependency file and source directory
+    dep_file, dep_fmt = find_dependency_file(requirements_path)
+
+    if src_path is None:
+        if requirements_path and Path(requirements_path).is_dir():
+            src_path = requirements_path
+        elif dep_file:
+            src_path = str(dep_file.parent)
+        else:
+            src_path = "."
+
     # 1. Parse dependencies ------------------------------------------------
     deps = parse_deps(requirements_path)
+    target_display = str(dep_file) if dep_file else (requirements_path or "active environment")
+
     console.print(
         f"\n[bold blue]ReachGuard[/bold blue] scanning "
-        f"[cyan]{requirements_path}[/cyan] — "
-        f"[bold]{len(deps)}[/bold] pinned dependencies\n"
+        f"[cyan]{target_display}[/cyan] — "
+        f"[bold]{len(deps)}[/bold] dependencies\n"
     )
 
     policy = load_policy(config_path)
@@ -380,8 +439,8 @@ def _version_callback(value: bool) -> None:
 @app.command()
 def main_cmd(
     requirements_path: str = typer.Argument(
-        ...,
-        help="Path to requirements.txt, pyproject.toml, or Pipfile.lock.",
+        None,
+        help="Path to requirements file, pyproject.toml, lockfile, or project directory (defaults to current directory).",
     ),
     src: str = typer.Option(
         None,
@@ -437,6 +496,9 @@ def main_cmd(
     ),
 ) -> None:
     """Scan dependencies for CVEs and rank by reachability."""
+    dep_file, _ = find_dependency_file(requirements_path)
+    target_path_str = str(dep_file) if dep_file else (requirements_path or "requirements.txt")
+
     findings = scan(requirements_path, src_path=src, call_graph_path=call_graph, config_path=config)
 
     if findings:
@@ -444,14 +506,14 @@ def main_cmd(
         if output_json:
             write_json_output(findings, output_json)
         if output_sarif:
-            write_sarif_output(findings, output_sarif, requirements_path=requirements_path)
+            write_sarif_output(findings, output_sarif, requirements_path=target_path_str)
             console.print(f"\n[dim]SARIF report written to:[/dim] [cyan]{output_sarif}[/cyan]")
         if output_html:
-            write_html_report(findings, output_html, requirements_path=requirements_path)
+            write_html_report(findings, output_html, requirements_path=target_path_str)
             console.print(f"\n[dim]HTML report written to:[/dim] [cyan]{output_html}[/cyan]")
         if output_sbom:
             deps = parse_deps(requirements_path)
-            write_sbom_output(findings, deps, output_sbom, requirements_path=requirements_path)
+            write_sbom_output(findings, deps, output_sbom, requirements_path=target_path_str)
             console.print(f"\n[dim]CycloneDX SBOM report written to:[/dim] [cyan]{output_sbom}[/cyan]")
         if fail_on_reachable:
             n = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
@@ -463,3 +525,4 @@ def main_cmd(
 
 if __name__ == "__main__":
     app()
+

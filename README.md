@@ -11,8 +11,8 @@
 <p align="center">
   <a href="https://pypi.org/project/reachguard/"><img src="https://img.shields.io/pypi/v/reachguard.svg" alt="PyPI Version"></a>
   <a href="https://github.com/chaitanyabhujbal912006-afk/reachguard/releases"><img src="https://img.shields.io/github/v/release/chaitanyabhujbal912006-afk/reachguard.svg" alt="GitHub Release"></a>
+  <a href="https://github.com/chaitanyabhujbal912006-afk/reachguard/actions/workflows/ci.yml"><img src="https://github.com/chaitanyabhujbal912006-afk/reachguard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
-  <a href="https://github.com/chaitanyabhujbal912006-afk/reachguard"><img src="https://img.shields.io/badge/ReachGuard-0%20Reachable%20CVEs-brightgreen.svg" alt="ReachGuard Self-Scan"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://osv.dev/"><img src="https://img.shields.io/badge/Vulnerability%20Data-OSV.dev-green.svg" alt="OSV.dev"></a>
   <a href="https://github.com/vitsalis/pycg"><img src="https://img.shields.io/badge/Call%20Graph-PyCG-purple.svg" alt="PyCG Powered"></a>
@@ -35,183 +35,154 @@ Traditional dependency security tools (**Dependabot**, **Snyk**, **Safety**) fla
 **ReachGuard** is an open-source, local-first, zero-cost vulnerability scanner that performs **static call-graph reachability analysis**. It traces your application's execution path from entry points down to external dependency calls to verify whether a vulnerable function can actually be reached at runtime.
 
 ```
-[ Entry Points ] ---> [ AST Walk ] ---> [ PyCG Call Graph ]
-                                               │
-                                               ▼
-[ OSV Advisory ] ---> [ Target Mine ] ---> [ BFS Reachability Check ]
-                                               │
-                                               ▼
-                                  ┌──────────────────────────┐
-                                  │   REACHABLE   (Action!)  │
-                                  │   UNKNOWN     (Review)   │
-                                  │   UNREACHABLE (Ignore)   │
-                                  └──────────────────────────┘
+[ Entry Points ] --> [ Import Scanner ] --> [ PyCG Call Graph ]
+                                                   │
+                                                   ▼
+[ OSV Advisory ] --> [ Target Mine ]  --> [ BFS Reachability Check ]
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │   REACHABLE   (Action!)  │
+                                      │   UNKNOWN     (Review)   │
+                                      │   UNREACHABLE (Ignore)   │
+                                      └──────────────────────────┘
 ```
 
 ---
 
-## 💡 How It Works (In 2 Simple Steps)
+## 💡 How It Works
 
-1. **Finds CVEs in Dependencies**: ReachGuard reads your `requirements.txt` (or `pyproject.toml` / `Pipfile.lock`) and queries the open **OSV.dev** security database for known vulnerabilities.
-2. **Traces Your Source Code**: It walks your Python source code (`--src ./src`), constructs a call graph via PyCG, and verifies: *"Does your code actually call the broken function inside that package?"*
+1. **Auto-Discovers Dependencies**: Reads your `requirements.txt`, `pyproject.toml`, `Pipfile.lock`, `poetry.lock`, `uv.lock`, or `pdm.lock` — or scans the active environment if no file is given.
+2. **Queries OSV.dev**: Checks every dependency against the open **OSV.dev** security database (no API key needed) with parallel requests, caching, and retry logic.
+3. **Import-Based Pre-Filter**: AST-walks your source files to check which packages are actually imported. Packages that are **never imported** are immediately marked `UNREACHABLE` — without needing a call graph.
+4. **Call Graph Reachability**: Builds a PyCG call graph and runs a BFS from detected entry points (Flask routes, `asyncio.run()`, `__main__.py`, etc.) to confirm if vulnerable functions are reachable.
 
-### 📊 The 3 Statuses ReachGuard Gives You:
+### 📊 The 3 Statuses:
 
 | Status | Meaning | Action |
 |---|---|---|
-| 🔴 **`REACHABLE`** | Your code **actually calls** the vulnerable function! | **Fix / Patch Immediately!** |
-| 🟡 **`UNKNOWN`** | Package has a CVE, but advisory function details are sparse. | Manual Review. |
-| 🟢 **`UNREACHABLE`** | Package has a CVE, but your code **never calls** that function. | **Safe to Ignore!** |
+| 🔴 **`REACHABLE`** | Your code **actually calls** the vulnerable function | **Patch immediately!** |
+| 🟡 **`UNKNOWN`** | Package is imported but advisory function details are sparse | Manual review |
+| 🟢 **`UNREACHABLE`** | CVE exists but vulnerable code path is never called | **Safe to deprioritize** |
 
 ### 🔍 Real-World Example:
 
 ```text
-Suppose your requirements.txt contains `werkzeug==2.3.3` (which has CVE-2023-221 in `parse_multipart`):
+requirements.txt contains werkzeug==2.3.3 (CVE in parse_multipart):
 
-- Dependabot:  🔴 "CRITICAL VULNERABILITY! Update Werkzeug!" (Even if your app never uploads files!)
-- ReachGuard:  🟢 "UNREACHABLE — Werkzeug has a CVE, but your code never calls parse_multipart()."
-- ReachGuard:  🔴 "REACHABLE   — app.py::download() -> Flask.dispatch_request() -> werkzeug.safe_join()"
+- Dependabot:  🔴 "CRITICAL! Update Werkzeug!"  (even if your app never uploads files)
+- ReachGuard:  🟢 "UNREACHABLE — werkzeug is never imported in your source"
+- ReachGuard:  🔴 "REACHABLE   — app.py::upload() -> Flask.dispatch() -> werkzeug.parse_multipart()"
 ```
 
 ---
 
 ## 🚀 Key Features
 
-* 🎯 **Smart Reachability Ranking**: Classifies findings into:
-  * `REACHABLE` 🔴: Vulnerable function is reachable from application entry points (High Priority).
-  * `UNKNOWN` 🟡: Package is imported but function-level advisory details are sparse (Manual Review).
-  * `UNREACHABLE` 🟢: Package contains a CVE, but the vulnerable code path is never called (Safe to Deprioritize).
-* ⚡ **Zero-Cost & Local-First**: Built entirely on free, open tools — **OSV.dev API** (no API key needed) and **PyCG** (static analysis).
-* 📦 **Multi-Format & Dynamic Dependency Support**: Auto-detects `requirements.txt`, `pyproject.toml` (PEP 621 & Poetry), and `Pipfile.lock`. Automatically resolves exact pins (`flask==2.3.2`) as well as unpinned or version-ranged dependencies (`flask>=2.0`) via `importlib.metadata`.
-* 🔍 **AST Entry Point Detector**: Automatically identifies `if __name__ == '__main__'` blocks and web route handlers (`@app.route`, `@app.get`, `@router.post` for Flask, FastAPI, Starlette).
-* 🧹 **Noise & Stdlib Filter**: Eliminates false positives by filtering standard library method references (`str.format`) and template filter names (`xmlattr`).
-* 📊 **CI/CD Integrated**: Rich terminal formatting with severity levels (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), `--output-json` exports, `--output-sarif` for GitHub Code Scanning, `--output-html` interactive dashboards, and `--fail-on-reachable` exit gates for build pipelines.
-* 🪝 **Pre-Commit Hook**: Native [pre-commit](https://pre-commit.com/) framework support — block commits automatically if reachable CVEs are detected.
+| Feature | Details |
+|---|---|
+| 🎯 **Smart Reachability** | BFS from entry points to vulnerable functions |
+| 🔍 **Import Pre-Filter** | Instant UNREACHABLE for packages never imported (~40% noise reduction) |
+| 💾 **OSV Cache** | Disk cache with 24h TTL (`~/.cache/reachguard/`) — fast repeat scans |
+| ⚡ **Retry Resilience** | 3x exponential backoff on OSV rate limits & server errors |
+| 📦 **Multi-Format** | `requirements.txt`, `pyproject.toml`, `Pipfile.lock`, `poetry.lock`, `uv.lock`, `pdm.lock` |
+| 🔄 **Zero-Config** | Auto-discovers dependency files — just run `reachguard` in your project |
+| 🌐 **Framework Support** | Flask, FastAPI, Django, Celery, Click, Typer, Tornado, Aiohttp |
+| 📊 **Rich Outputs** | Table, JSON, SARIF v2.1.0, HTML dashboard, CycloneDX v1.5 SBOM |
+| 🪝 **Pre-Commit Hook** | Block commits if REACHABLE CVEs are found |
+| 🤖 **GitHub Action** | Built-in action + CI workflow with auto-PyPI publish |
+| 📋 **Policy Engine** | `.reachguardignore` / `reachguard.toml` to suppress false positives |
+| 🔧 **Auto-Remediation** | `--suggest-fixes` shows exact `pip install pkg>=fixed_version` commands |
 
 ---
 
 ## ⚙️ Installation
 
-### Option 1: Via PyPI (Recommended)
-Install ReachGuard globally from PyPI:
-
+### Via PyPI (Recommended)
 ```bash
 pip install reachguard
 ```
 
-### Option 2: From Source
+### From Source
 ```bash
 git clone https://github.com/chaitanyabhujbal912006-afk/reachguard.git
 cd reachguard
 pip install -e .
 ```
 
-*(Requirements include `typer`, `rich`, `requests`, and `pycg`)*
-
 ---
 
-## 💻 Quick Start & Usage
+## 💻 Usage
 
-### 1. Basic Scan (Auto-build Call Graph)
-Provide your dependency file and source code directory. ReachGuard will automatically detect entry points and generate the call graph:
+### Zero-Config (just run in your project directory)
+```bash
+reachguard
+```
 
+### Scan a specific file or directory
 ```bash
 reachguard requirements.txt --src ./src
 ```
 
-### 2. Scan using Pre-Built Call Graph
-If you already generated a PyCG call graph JSON file:
-
+### With all output formats
 ```bash
-reachguard requirements.txt --src ./src --call-graph callgraph.json
+reachguard . --src . \
+  --output-json report.json \
+  --output-sarif report.sarif \
+  --output-html report.html \
+  --output-sbom sbom.json \
+  --suggest-fixes
 ```
 
-### 3. CI/CD Quality Gate Pipeline
-Export findings to JSON and break the build if any `REACHABLE` vulnerabilities exist:
-
+### CI/CD quality gate — fail on REACHABLE CVEs
 ```bash
-reachguard requirements.txt --src ./src --output-json report.json --fail-on-reachable
+reachguard . --src . --fail-on-reachable
+```
+
+### Filter noise — only show HIGH+ severity findings that are reachable
+```bash
+reachguard . --src . --min-severity HIGH --only-reachable
+```
+
+### Speed up with caching and more workers
+```bash
+reachguard . --src . --max-workers 20 --cache-dir ./.cache
 ```
 
 ---
 
-## 🤖 GitHub Actions Integration
+## 📋 Full CLI Reference
 
-Add ReachGuard as an automated security quality gate in your repository (`.github/workflows/security.yml`):
-
-```yaml
-name: ReachGuard Security Scan
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  reachguard-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Run ReachGuard Reachability Scan
-        uses: chaitanyabhujbal912006-afk/reachguard@main
-        with:
-          requirements: 'requirements.txt'
-          src: '.'
-          output_json: 'reachguard-report.json'
-          fail_on_reachable: 'true'
 ```
-
----
-
-## 🪝 Pre-Commit Integration
-
-ReachGuard supports the [pre-commit](https://pre-commit.com/) framework, letting you block commits automatically when reachable CVEs are found.
-
-### Setup
-
-1. Install pre-commit (if you haven't already):
-   ```bash
-   pip install pre-commit
-   ```
-
-2. Add the following to your project's `.pre-commit-config.yaml`:
-   ```yaml
-   repos:
-     - repo: https://github.com/chaitanyabhujbal912006-afk/reachguard
-       rev: main  # or pin to a specific release tag
-       hooks:
-         - id: reachguard
-           args: ["requirements.txt", "--src", ".", "--fail-on-reachable"]
-   ```
-
-3. Install the hooks:
-   ```bash
-   pre-commit install
-   ```
-
-From now on, every `git commit` will automatically run a ReachGuard scan. Commits are blocked if any `REACHABLE` CVEs are found.
-
----
-
-
-```text
-Usage: reachguard [OPTIONS] REQUIREMENTS_PATH
+Usage: reachguard [OPTIONS] [REQUIREMENTS_PATH]
 
 Arguments:
-  REQUIREMENTS_PATH  Path to requirements.txt, pyproject.toml, or Pipfile.lock  [required]
+  REQUIREMENTS_PATH  Path to requirements file, pyproject.toml, lockfile,
+                     or project directory. Defaults to current directory.
 
 Options:
-  -s, --src TEXT          Path to Python source directory for auto call-graph & entry points.
-  -g, --call-graph TEXT   Path to pre-built PyCG call graph JSON file.
-  -o, --output-json TEXT  File path to export scan findings as structured JSON.
-  --output-sarif TEXT     Write findings in SARIF v2.1.0 format (for GitHub Security Code Scanning).
-  --output-html TEXT      Write an interactive HTML dashboard report to this file.
-  --fail-on-reachable     Exit with non-zero status (1) if reachable CVEs are detected.
-  --suggest-fixes         Display recommended pip upgrade patch commands for vulnerabilities.
-  --help                  Show this message and exit.
+  -s, --src TEXT           Source directory for call graph & entry point detection.
+  -g, --call-graph TEXT    Pre-built PyCG call graph JSON (skips auto-build).
+  -o, --output-json TEXT   Write findings as JSON to this file.
+  --output-sarif TEXT      Write findings in SARIF v2.1.0 format.
+  --output-html TEXT       Write an interactive HTML dashboard report.
+  --output-sbom TEXT       Write CycloneDX v1.5 SBOM JSON.
+  --fail-on-reachable      Exit code 1 if any REACHABLE CVEs found.
+  --exit-code TEXT         Exit strategy: 'none' | 'any' | 'reachable' (default).
+  --suggest-fixes          Show recommended pip upgrade commands.
+  --min-severity TEXT      Minimum severity: LOW | MEDIUM | HIGH | CRITICAL.
+  --only-reachable         Show only REACHABLE findings.
+  --timeout INT            OSV HTTP timeout in seconds (default: 10).
+  --max-workers INT        Concurrent OSV HTTP threads (default: 10).
+  --no-cache               Disable disk-based OSV response cache.
+  --cache-dir TEXT         Custom cache directory (default: ~/.cache/reachguard/).
+  -v, --verbose            Debug output: raw API responses, cache stats.
+  -q, --quiet              Suppress all output except errors.
+  --log-file TEXT          Write structured log to this file.
+  --log-format TEXT        Log format: 'plain' (default) or 'json'.
+  -c, --config TEXT        Policy file (.reachguardignore / reachguard.toml).
+  -V, --version            Print version and exit.
+  --help                   Show this message and exit.
 ```
 
 ---
@@ -219,30 +190,102 @@ Options:
 ## 📊 Sample Terminal Output
 
 ```text
-ReachGuard scanning requirements.txt — 21 pinned dependencies
+ReachGuard v1.0.0 scanning requirements.txt — 21 dependencies
 
-Loaded call graph: callgraph.json (137 nodes)
-Entry points detected: 2
+Building call graph via PyCG … (./src)
+Call graph built: 137 nodes
 
-                            ReachGuard Scan Results                            
-┌──────────────────┬─────────────────────┬──────────┬──────────────┬─────────────────────────────────────────┐
-│ Package          │ CVE / ID            │ Severity │ Status       │ Summary                                 │
-├──────────────────┼─────────────────────┼──────────┼──────────────┼─────────────────────────────────────────┤
-│ werkzeug==2.3.3  │ GHSA-29vq-49wr-vm6x │ MODERATE │ REACHABLE    │ Werkzeug high resource usage parsing... │
-│ werkzeug==2.3.3  │ GHSA-87hc-h4r5-73f7 │ MODERATE │ REACHABLE    │ Werkzeug parsing multipart form data... │
-│ celery==5.2.7    │ GHSA-1234-abcd-5678 │ HIGH     │ UNKNOWN      │ Celery deserialization advisory         │
-│ flask==2.3.2     │ GHSA-68rp-wp8r-4726 │ LOW      │ UNREACHABLE  │ Flask session Vary: Cookie header       │
-│ jinja2==3.1.2    │ GHSA-q2x7-8rv6-6q7h │ MODERATE │ UNREACHABLE  │ Jinja sandbox breakout via format       │
-└──────────────────┴─────────────────────┴──────────┴──────────────┴─────────────────────────────────────────┘
+Entry points detected: 4
+Import scanner: 14 packages imported in source
 
-Summary:  2 reachable  |  1 unknown  |  2 unreachable  |  0 critical severity (total CVEs: 5)
+                            ReachGuard Scan Results
+┌──────────────────┬─────────────────────┬──────────┬──────────────┬──────────────────────────────────────────┐
+│ Package          │ CVE / ID            │ Severity │ Status       │ Summary                                  │
+├──────────────────┼─────────────────────┼──────────┼──────────────┼──────────────────────────────────────────┤
+│ werkzeug==2.3.3  │ GHSA-29vq-49wr-vm6x │ HIGH     │ REACHABLE    │ Werkzeug multipart parsing DoS ...       │
+│                  │                     │          │              │ --> Path: upload -> dispatch -> parse_... │
+│ celery==5.2.7    │ GHSA-1234-abcd-5678 │ HIGH     │ unknown      │ Celery deserialization advisory           │
+│ flask==2.3.2     │ GHSA-68rp-wp8r-4726 │ LOW      │ unreachable  │ Flask session Vary: Cookie header         │
+│ jinja2==3.1.2    │ GHSA-q2x7-8rv6-6q7h │ MEDIUM   │ unreachable  │ Jinja sandbox breakout (not imported)    │
+└──────────────────┴─────────────────────┴──────────┴──────────────┴──────────────────────────────────────────┘
 
-! Action required: 2 CVE(s) are reachable from your code -- patch or mitigate these first.
+Summary:  1 reachable  |  1 unknown  |  2 unreachable  |  0 critical severity (total CVEs: 4)
+
+! Action required: 1 CVE(s) are reachable from your code -- patch or mitigate these first.
 ```
 
 ---
 
-## 🛠️ Architecture & How It Works
+## 🤖 GitHub Actions Integration
+
+```yaml
+name: ReachGuard Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  reachguard-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ReachGuard Scan
+        uses: chaitanyabhujbal912006-afk/reachguard@main
+        with:
+          requirements: '.'
+          src: '.'
+          output_sarif: 'reachguard.sarif'
+          fail_on_reachable: 'true'
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reachguard.sarif
+```
+
+---
+
+## 🪝 Pre-Commit Integration
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/chaitanyabhujbal912006-afk/reachguard
+    rev: v1.0.0
+    hooks:
+      - id: reachguard
+        args: [".", "--src", ".", "--fail-on-reachable"]
+```
+
+---
+
+## 🛡️ Policy Suppression
+
+Suppress known false positives or accepted risks:
+
+**`.reachguardignore`** (line-based):
+```
+# Accepted risk — only triggered via admin panel
+GHSA-29vq-49wr-vm6x  # Werkzeug multipart — admin-only endpoint, rate-limited
+CVE-2023-12345       # No viable patch yet, mitigated by WAF
+```
+
+**`reachguard.toml`** (with expiry dates):
+```toml
+[ignore]
+"GHSA-29vq-49wr-vm6x" = { reason = "Admin-only endpoint", expires = "2026-12-31" }
+
+[ignore_packages]
+ignore_packages = ["dev-only-tool"]
+```
+
+---
+
+## 🛠️ Architecture
 
 ```
                      ┌───────────────────────────────┐
@@ -252,15 +295,20 @@ Summary:  2 reachable  |  1 unknown  |  2 unreachable  |  0 critical severity (t
                                      │
                                      ▼
                      ┌───────────────────────────────┐
-                     │       OSV.dev API Query       │
+                     │  OSV.dev API (Parallel+Cache) │
+                     │  Retry on 429/5xx, 24h TTL    │
                      └───────────────┬───────────────┘
                                      │
-                                     ▼
-┌──────────────────────────────┐    ┌──────────────────────────────┐
-│  AST Entry Point Detector    │    │  PyCG Static Call Graph      │
-│  (__main__, @app.route)      │    │  (Caller -> Callee Graph)    │
-└──────────────┬───────────────┘    └──────────────┬───────────────┘
-               │                                   │
+                     ┌───────────────▼───────────────┐
+                     │   Import Scanner (AST-fast)   │  ← NEW in v1.0
+                     │  Not imported → UNREACHABLE   │
+                     └───────────────┬───────────────┘
+                                     │
+┌──────────────────────────┐        ┌▼─────────────────────────┐
+│  AST Entry Point Detector│        │  PyCG Static Call Graph  │
+│  (__main__, @app.route,  │        │  (Caller → Callee Graph) │
+│   asyncio.run, uvicorn)  │        └──────────────┬───────────┘
+└──────────────┬───────────┘                       │
                └─────────────────┬─────────────────┘
                                  │
                                  ▼
@@ -273,47 +321,50 @@ Summary:  2 reachable  |  1 unknown  |  2 unreachable  |  0 critical severity (t
                                      │
                                      ▼
                      ┌───────────────────────────────┐
-                     │     Rich Terminal & JSON      │
+                     │  Rich Table / JSON / SARIF /  │
+                     │  HTML / CycloneDX SBOM        │
                      └───────────────────────────────┘
 ```
 
-1. **Dependency Ingestion**: Auto-detects dependency files and normalizes package names and exact pinned versions according to PEP 503.
-2. **Advisory Resolution**: Batch queries OSV.dev REST endpoints to retrieve known vulnerability data and extracts function targets using heuristic regex mining.
-3. **Call Graph Generation**: Invokes PyCG to construct a complete control-flow call graph of Python callables.
-4. **AST Entry Point Mining**: Walks repository ASTs to locate execution roots (`if __name__ == '__main__'`, Flask/FastAPI route decorators).
-5. **Graph Traversal (BFS)**: Executes a multi-tier Breadth-First Search from discovered entry points to target vulnerability functions, returning a deterministic `ReachabilityStatus`.
-
 ---
 
-## 🧪 Running Tests
-
-ReachGuard includes a 35-test suite covering AST parsing, OSV target extraction, noise filtering, call-graph normalisation, and reachability traversal:
+## 🧪 Testing
 
 ```bash
-python tests/test_suite.py
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run all 46 tests
+python -m pytest tests/ -v
+
+# With coverage report
+python -m pytest tests/ --cov=reachguard_core --cov-report=term-missing
 ```
+
+**Test coverage includes:**
+- Cache TTL, hit/miss, corruption handling
+- Import scanner: aliases, .venv skipping, syntax errors
+- OSV: mocked HTTP, retry logic, batch queries
+- Reachability: BFS traversal, noise filtering, suffix matching
+- CLI: HTML output, SBOM, SARIF, policy suppression
+- Dependency parsers: `uv.lock`, `pdm.lock`, recursive `-r` includes
 
 ---
 
-## 🗺️ Roadmap & Future Backlog
+## 📜 Changelog
 
-Interested in what's coming next or looking to contribute? Check out our detailed [**ROADMAP.md**](ROADMAP.md) for planned features including:
-- 💡 **Auto-Remediation Patch Advice (`--suggest-fixes`)**
-- 🛡️ **SARIF v2.1.0 Export (`--output-sarif`)**
-- 📊 **Interactive HTML Dashboards (`--output-html`)**
-- 🪝 **Pre-Commit Git Hooks**
-- 🔍 **Extended Framework Detectors (Django, Celery, Click)**
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Feel free to open an issue or submit a pull request:
+Contributions welcome! Open an issue or submit a pull request:
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
+1. Fork the project
+2. Create your feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -m 'Add my feature'`
+4. Push to the branch: `git push origin feature/my-feature`
 5. Open a Pull Request
 
 ---

@@ -170,6 +170,8 @@ Options:
   --fail-on-reachable      Exit code 1 if any REACHABLE CVEs found.
   --exit-code TEXT         Exit strategy: 'none' | 'any' | 'reachable' (default).
   --suggest-fixes          Show recommended pip upgrade commands.
+  --epss                   Fetch EPSS exploit probability scores from first.org API.
+  --diff TEXT              Git base branch (e.g. 'main') for PR incremental scanning.
   --min-severity TEXT      Minimum severity: LOW | MEDIUM | HIGH | CRITICAL.
   --only-reachable         Show only REACHABLE findings.
   --timeout INT            OSV HTTP timeout in seconds (default: 10).

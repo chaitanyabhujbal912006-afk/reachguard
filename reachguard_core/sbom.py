@@ -3,6 +3,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
+from reachguard_core import __version__
 from reachguard_core.reachability import ReachabilityStatus
 
 # Type hint matching cli.py
@@ -92,7 +93,7 @@ def generate_cyclonedx_sbom(
                 {
                     "vendor": "ReachGuard",
                     "name": "reachguard",
-                    "version": "0.3.0",
+                    "version": __version__,
                 }
             ],
             "component": {

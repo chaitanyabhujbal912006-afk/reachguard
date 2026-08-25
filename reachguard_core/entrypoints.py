@@ -3,14 +3,23 @@
 Walks a directory tree and identifies functions and class methods that act
 as program entry points, including:
   - ``if __name__ == '__main__'`` blocks
+  - ``__main__.py`` module files
+  - ``asyncio.run()`` / ``uvicorn.run()`` / ``gunicorn`` application references
   - Flask / FastAPI / Starlette route-decorated functions & event handlers
+  - FastAPI lifespan context managers
   - Django path/re_path/url view decorators & Class-Based Views (CBVs)
   - Click & Typer CLI commands (@click.command, @app.command)
   - Celery @task and @shared_task decorated functions
+  - Tornado / Aiohttp web handlers
 """
 
 import ast
 import os
+from pathlib import Path
+
+from reachguard_core.logger import get_logger
+
+log = get_logger(__name__)
 
 # HTTP-method, routing, CLI, and task keywords used across major Python frameworks
 _ROUTE_KEYWORDS: frozenset[str] = frozenset({
@@ -25,7 +34,18 @@ _ROUTE_KEYWORDS: frozenset[str] = frozenset({
     "task", "shared_task",
     # Tornado / Aiohttp web handlers
     "prepare", "initialize", "web",
+    # FastAPI lifespan / startup / shutdown
+    "startup", "shutdown", "contextmanager",
 })
+
+# asyncio.run / uvicorn.run / gunicorn call patterns that denote app entry points
+_RUNNER_FUNCTIONS: frozenset[str] = frozenset({
+    # asyncio
+    "run",
+    # uvicorn
+    "serve",
+})
+_RUNNER_MODULES: frozenset[str] = frozenset({"asyncio", "uvicorn", "hypercorn", "daphne"})
 
 # Base class names for Django / DRF / Tornado / Aiohttp Class-Based Views
 _DJANGO_CBV_BASES: frozenset[str] = frozenset({
@@ -51,19 +71,33 @@ def find_entry_points(repo_path: str) -> list[str]:
     entry_points: list[str] = []
     seen: set[str] = set()
 
+    def _add(ep: str) -> None:
+        if ep not in seen:
+            seen.add(ep)
+            entry_points.append(ep)
+
     for root, _dirs, files in os.walk(repo_path):
+        # Skip non-project directories
+        _dirs[:] = [
+            d for d in _dirs
+            if d not in {"__pycache__", ".git", ".venv", "venv", "node_modules", ".tox"}
+        ]
         for filename in files:
             if not filename.endswith(".py"):
                 continue
 
             filepath = os.path.join(root, filename)
 
+            # Auto-seed __main__.py files — they ARE entry points by definition
+            if filename == "__main__.py":
+                _add(f"{filepath}::__main__")
+
             try:
-                with open(filepath, "r", encoding="utf-8") as fh:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as fh:
                     source = fh.read()
                 tree = ast.parse(source, filename=filepath)
-            except (SyntaxError, UnicodeDecodeError):
-                # Silently skip files we cannot parse.
+            except (SyntaxError, UnicodeDecodeError, OSError) as exc:
+                log.debug("Skipping %s: %s", filepath, exc)
                 continue
 
             for node in ast.walk(tree):
@@ -78,10 +112,22 @@ def find_entry_points(repo_path: str) -> list[str]:
                         and isinstance(test.comparators[0], ast.Constant)
                         and test.comparators[0].value == "__main__"
                     ):
-                        ep = f"{filepath}::__main__"
-                        if ep not in seen:
-                            seen.add(ep)
-                            entry_points.append(ep)
+                        _add(f"{filepath}::__main__")
+
+                # -- asyncio.run() / uvicorn.run() detection -------------------
+                # Marks functions containing these calls as entry points
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for child in ast.walk(node):
+                        if isinstance(child, ast.Call):
+                            func = child.func
+                            if (
+                                isinstance(func, ast.Attribute)
+                                and func.attr in _RUNNER_FUNCTIONS
+                                and isinstance(func.value, ast.Name)
+                                and func.value.id in _RUNNER_MODULES
+                            ):
+                                _add(f"{filepath}::{node.name}")
+                                break
 
                 # -- Web & CLI Framework Decorators ---------------------------
                 # Matches Flask, FastAPI, Starlette, Django, Click, Typer, Celery
@@ -100,10 +146,7 @@ def find_entry_points(repo_path: str) -> list[str]:
                                 dec_name = func.id
 
                         if dec_name and dec_name in _ROUTE_KEYWORDS:
-                            ep = f"{filepath}::{node.name}"
-                            if ep not in seen:
-                                seen.add(ep)
-                                entry_points.append(ep)
+                            _add(f"{filepath}::{node.name}")
                             break
 
                 # -- Django Class-Based Views (CBVs) --------------------------
@@ -121,9 +164,7 @@ def find_entry_points(repo_path: str) -> list[str]:
                         for item in node.body:
                             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                                 if item.name in ("get", "post", "put", "delete", "patch", "dispatch", "handle"):
-                                    ep = f"{filepath}::{node.name}.{item.name}"
-                                    if ep not in seen:
-                                        seen.add(ep)
-                                        entry_points.append(ep)
+                                    _add(f"{filepath}::{node.name}.{item.name}")
 
+    log.debug("Found %d entry points in %s", len(entry_points), repo_path)
     return entry_points

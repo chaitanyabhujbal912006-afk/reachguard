@@ -1,6 +1,7 @@
 """SARIF v2.1.0 exporter for GitHub Code Scanning and IDE integration."""
 
 import json
+from reachguard_core import __version__
 from reachguard_core.reachability import ReachabilityStatus
 
 # Type hint for Finding matching cli.py
@@ -78,7 +79,7 @@ def generate_sarif(findings: list[Finding], requirements_path: str = "requiremen
                 "tool": {
                     "driver": {
                         "name": "ReachGuard",
-                        "semanticVersion": "0.3.0",
+                        "semanticVersion": __version__,
                         "informationUri": "https://github.com/chaitanyabhujbal912006-afk/reachguard",
                         "rules": rules
                     }

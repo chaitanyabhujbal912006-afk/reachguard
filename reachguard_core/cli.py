@@ -2,15 +2,15 @@
 
 End-to-end workflow:
   1. Auto-detect and parse the dependency file (requirements.txt / pyproject.toml / Pipfile.lock).
-  2. Query OSV.dev for known vulnerabilities (with a Rich progress bar).
+  2. Query OSV.dev for known vulnerabilities (with a Rich progress bar, caching, and retries).
   3. Build the PyCG call graph automatically from --src, OR load a pre-built one.
-  4. Detect entry points (main blocks, route handlers).
-  5. Check reachability of each vulnerable function.
-  6. Render a ranked Rich table sorted: REACHABLE > UNKNOWN > UNREACHABLE.
-  7. Optionally write machine-readable JSON via --output-json.
+  4. Run import-based pre-filter: packages never imported in source → UNREACHABLE immediately.
+  5. Detect entry points (main blocks, route handlers, uvicorn.run etc.).
+  6. Check reachability of each vulnerable function via BFS.
+  7. Render a ranked Rich table sorted: REACHABLE > UNKNOWN > UNREACHABLE.
+  8. Optionally write JSON / SARIF / HTML / CycloneDX SBOM output files.
 """
 
-import importlib.metadata
 import json
 import os
 import subprocess
@@ -24,9 +24,13 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 from rich.table import Table
 from rich import box
 
+from reachguard_core import __version__
+from reachguard_core.logger import configure_logging, get_logger
+from reachguard_core.cache import OsvCache
 from reachguard_core.deps import parse_deps, find_dependency_file
-from reachguard_core.osv import query_cves, query_cves_batch, extract_fixed_version
+from reachguard_core.osv import query_cves_batch, extract_fixed_version
 from reachguard_core.entrypoints import find_entry_points
+from reachguard_core.import_scanner import ImportScanner
 from reachguard_core.reachability import (
     ReachabilityStatus,
     check_reachability_details,
@@ -42,9 +46,11 @@ app = typer.Typer(
 )
 console = Console()
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+log = get_logger(__name__)
+
+# ── Severity ordering ────────────────────────────────────────────────────────
+
+_SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "-": 4}
 
 _RANK = {
     ReachabilityStatus.REACHABLE:   0,
@@ -65,16 +71,20 @@ _SEVERITY_STYLE = {
     "LOW":      "[dim]LOW[/dim]",
 }
 
+# Minimum severity enum for filtering
+_SEVERITY_LEVELS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
-# ---------------------------------------------------------------------------
-# A4 — auto-invoke PyCG
-# ---------------------------------------------------------------------------
+
+# ── PyCG auto-detection ───────────────────────────────────────────────────────
 
 def _find_pycg_cmd(src_path: str) -> list[str] | None:
     """Locate executable command list for PyCG across python interpreters and venvs."""
     # 1. Active sys.executable
     try:
-        res = subprocess.run([sys.executable, "-m", "pycg", "--help"], capture_output=True, text=True, timeout=5)
+        res = subprocess.run(
+            [sys.executable, "-m", "pycg", "--help"],
+            capture_output=True, text=True, timeout=5,
+        )
         if res.returncode == 0:
             return [sys.executable, "-m", "pycg"]
     except Exception:
@@ -94,7 +104,10 @@ def _find_pycg_cmd(src_path: str) -> list[str] | None:
     for venv_py in candidates:
         if venv_py.is_file():
             try:
-                res = subprocess.run([str(venv_py), "-m", "pycg", "--help"], capture_output=True, text=True, timeout=5)
+                res = subprocess.run(
+                    [str(venv_py), "-m", "pycg", "--help"],
+                    capture_output=True, text=True, timeout=5,
+                )
                 if res.returncode == 0:
                     return [str(venv_py), "-m", "pycg"]
             except Exception:
@@ -112,12 +125,12 @@ def _find_pycg_cmd(src_path: str) -> list[str] | None:
 def _build_call_graph(src_path: str) -> dict:
     """Run PyCG against *src_path* and return the resulting call graph dict.
 
-    Invokes PyCG with package auto-detection across local environments.
     Returns an empty dict (silently) if PyCG is not installed or fails.
     """
     pycg_cmd = _find_pycg_cmd(src_path)
     if not pycg_cmd:
         console.print("[yellow]PyCG not found — install with: pip install pycg[/yellow]")
+        log.warning("PyCG not found — call graph unavailable.")
         return {}
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
@@ -125,33 +138,34 @@ def _build_call_graph(src_path: str) -> dict:
 
     try:
         cmd = pycg_cmd + ["--package", src_path, "-o", tmp_path]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        log.debug("Running PyCG: %s", " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
-            console.print(
-                f"[yellow]PyCG warning:[/yellow] {result.stderr.strip()[:200] or 'non-zero exit'}"
-            )
+            msg = result.stderr.strip()[:200] or "non-zero exit"
+            console.print(f"[yellow]PyCG warning:[/yellow] {msg}")
+            log.warning("PyCG non-zero exit: %s", msg)
         try:
             with open(tmp_path, encoding="utf-8") as fh:
-                return json.load(fh)
+                graph = json.load(fh)
+            log.debug("PyCG call graph: %d nodes", len(graph))
+            return graph
         except (FileNotFoundError, json.JSONDecodeError) as parse_exc:
             console.print(
                 f"[yellow]PyCG output unreadable ({parse_exc.__class__.__name__}) — "
                 "skipping call graph.[/yellow]"
             )
+            log.warning("PyCG output unreadable: %s", parse_exc)
             return {}
     except FileNotFoundError:
         console.print("[yellow]PyCG not found — install with: pip install pycg[/yellow]")
         return {}
     except subprocess.TimeoutExpired:
         console.print("[yellow]PyCG timed out after 120 s — skipping call graph.[/yellow]")
+        log.warning("PyCG timed out after 120s")
         return {}
     except Exception as exc:
         console.print(f"[yellow]PyCG error:[/yellow] {exc}")
+        log.warning("PyCG error: %s", exc)
         return {}
     finally:
         try:
@@ -166,28 +180,26 @@ def _load_call_graph(call_graph_path: str | None) -> dict:
         return {}
     try:
         with open(call_graph_path, encoding="utf-8") as fh:
-            return json.load(fh)
+            graph = json.load(fh)
+        log.debug("Loaded call graph from %s (%d nodes)", call_graph_path, len(graph))
+        return graph
     except Exception as exc:
         console.print(f"[yellow]Warning: could not load call graph: {exc}[/yellow]")
+        log.warning("Could not load call graph %s: %s", call_graph_path, exc)
         return {}
 
 
-# ---------------------------------------------------------------------------
-# Severity helper (B5)
-# ---------------------------------------------------------------------------
+# ── Severity helper ───────────────────────────────────────────────────────────
 
 def _get_severity(vuln: dict) -> str:
     """Extract the highest severity label from an OSV advisory dict."""
-    # CVSS v3 severity from database_specific (GHSA advisories)
     for affected in vuln.get("affected", []):
         sev = affected.get("database_specific", {}).get("severity", "")
         if sev:
             return sev.upper()
-    # Top-level database_specific
     sev = vuln.get("database_specific", {}).get("severity", "")
     if sev:
         return sev.upper()
-    # CVSS v3 score -> map to label
     for sev_entry in vuln.get("severity", []):
         score_str = sev_entry.get("score", "")
         try:
@@ -205,9 +217,7 @@ def _get_severity(vuln: dict) -> str:
     return "-"
 
 
-# ---------------------------------------------------------------------------
-# Core scan logic
-# ---------------------------------------------------------------------------
+# ── Core scan logic ───────────────────────────────────────────────────────────
 
 Finding = tuple[str, str, str, str, ReachabilityStatus, str, list[str] | None, str | None]
 # (package_name, version, cve_id, summary, status, severity, call_path, fixed_version)
@@ -218,23 +228,38 @@ def scan(
     src_path: str | None = None,
     call_graph_path: str | None = None,
     config_path: str | None = None,
+    min_severity: str | None = None,
+    only_reachable: bool = False,
+    timeout: int = 10,
+    cache: OsvCache | None = None,
+    max_workers: int = 10,
+    verbose: bool = False,
 ) -> list[Finding]:
     """Run a full ReachGuard scan and return the findings list.
 
     Args:
-        requirements_path: Optional path to requirements file, pyproject.toml, lockfile,
+        requirements_path: Path to requirements file, pyproject.toml, lockfile,
             or project directory. Defaults to auto-discovering in current directory.
-        src_path: Optional path to repo source directory. If provided and
-            *call_graph_path* is not, PyCG is invoked automatically.
-        call_graph_path: Optional path to a pre-built PyCG call graph JSON.
-        config_path: Optional path to policy file (.reachguardignore / reachguard.toml).
+        src_path:       Source directory. PyCG + import scanner used if provided.
+        call_graph_path: Path to a pre-built PyCG call graph JSON.
+        config_path:    Path to policy file (.reachguardignore / reachguard.toml).
+        min_severity:   Minimum severity to report (LOW/MEDIUM/HIGH/CRITICAL).
+        only_reachable: If True, suppress UNKNOWN and UNREACHABLE findings.
+        timeout:        OSV HTTP request timeout in seconds.
+        cache:          OsvCache instance (None to skip caching).
+        max_workers:    Max concurrent OSV HTTP threads.
+        verbose:        Whether to print extra diagnostic info.
 
     Returns:
-        List of ``(name, version, cve_id, summary, status, severity)`` tuples
-        sorted by reachability rank (most dangerous first).
+        List of Finding tuples sorted by reachability rank (most dangerous first).
     """
-    # Auto-discover dependency file and source directory
-    dep_file, dep_fmt = find_dependency_file(requirements_path)
+    # ── Auto-discover dependency file ────────────────────────────────────────
+    try:
+        dep_file, dep_fmt = find_dependency_file(requirements_path)
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] Could not find dependency file — {exc}")
+        log.error("Dependency file discovery failed: %s", exc, exc_info=True)
+        raise typer.Exit(code=2)
 
     if src_path is None:
         if requirements_path and Path(requirements_path).is_dir():
@@ -244,19 +269,35 @@ def scan(
         else:
             src_path = "."
 
-    # 1. Parse dependencies ------------------------------------------------
-    deps = parse_deps(requirements_path)
+    # ── Parse dependencies ───────────────────────────────────────────────────
+    try:
+        deps = parse_deps(requirements_path)
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] Failed to parse dependencies — {exc}")
+        log.error("Dependency parsing failed: %s", exc, exc_info=True)
+        raise typer.Exit(code=2)
+
+    # Warn on duplicate packages
+    seen_pkgs: dict[str, str] = {}
+    for name, ver in deps:
+        if name in seen_pkgs and seen_pkgs[name] != ver:
+            console.print(
+                f"[yellow]Warning:[/yellow] Duplicate package '{name}' "
+                f"(versions {seen_pkgs[name]} and {ver}) — using {ver}"
+            )
+        seen_pkgs[name] = ver
+
     target_display = str(dep_file) if dep_file else (requirements_path or "active environment")
 
     console.print(
-        f"\n[bold blue]ReachGuard[/bold blue] scanning "
+        f"\n[bold blue]ReachGuard[/bold blue] [dim]v{__version__}[/dim] scanning "
         f"[cyan]{target_display}[/cyan] — "
         f"[bold]{len(deps)}[/bold] dependencies\n"
     )
 
     policy = load_policy(config_path)
 
-    # 2. Build / load call graph & detect entry points ---------------------
+    # ── Build / load call graph & detect entry points ────────────────────────
     call_graph: dict = {}
 
     if call_graph_path:
@@ -270,32 +311,67 @@ def scan(
             console.print(f"[blue]Call graph built:[/blue] {len(call_graph)} nodes\n")
 
     entry_points: list[str] = []
+    import_scanner: ImportScanner | None = None
+
     if src_path and Path(src_path).is_dir():
         entry_points = find_entry_points(src_path)
         console.print(f"[blue]Entry points detected:[/blue] {len(entry_points)}\n")
+        # Always build the import scanner — it's fast (AST-only) and reduces false UNKNOWNs
+        import_scanner = ImportScanner(src_path)
+        imported_pkgs = import_scanner.scan()
+        log.debug("Import scanner found %d imported packages", len(imported_pkgs))
+        if verbose:
+            console.print(
+                f"[dim]Import scanner:[/dim] {len(imported_pkgs)} packages imported in source\n"
+            )
 
     have_graph = bool(call_graph)
     if not have_graph:
-        console.print(
-            "[yellow]No call graph available — all CVEs will be marked UNKNOWN.[/yellow]\n"
-            "[dim]Tip: pass --src <dir> to auto-build one, or --call-graph <file>.[/dim]\n"
-        )
+        msg = "[yellow]No call graph available"
+        if import_scanner:
+            msg += " — using import-based pre-filter to detect UNREACHABLE packages"
+        else:
+            msg += " — all CVEs will be marked UNKNOWN"
+        msg += ".[/yellow]"
+        console.print(msg + "\n")
+        if not import_scanner:
+            console.print(
+                "[dim]Tip: pass --src <dir> to auto-build one, or --call-graph <file>.[/dim]\n"
+            )
 
-    # 3. Query OSV & check reachability with progress bar (B2) ------------
+    # ── Severity filter threshold ────────────────────────────────────────────
+    min_sev_idx = _SEVERITY_LEVELS.index(min_severity.upper()) if min_severity else 0
+
+    # ── Query OSV & check reachability with progress bar ─────────────────────
     findings: list[Finding] = []
     ignored_count = 0
+    filtered_sev_count = 0
+    done_count = 0
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(bar_width=28),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("[dim]{task.completed}/{task.total}[/dim]"),
         TimeElapsedColumn(),
         console=console,
         transient=True,
     ) as progress:
-        task = progress.add_task("Querying OSV.dev (parallel)…", total=len(deps))
-        batch_results = query_cves_batch(deps, max_workers=10, callback=lambda: progress.advance(task))
+        task = progress.add_task("Querying OSV.dev …", total=len(deps))
+
+        def _advance():
+            nonlocal done_count
+            done_count += 1
+            progress.update(task, advance=1, description=f"Querying OSV.dev [{done_count}/{len(deps)}] …")
+
+        batch_results = query_cves_batch(
+            deps,
+            max_workers=max_workers,
+            callback=_advance,
+            timeout=timeout,
+            cache=cache,
+        )
 
         for (name, version), vulns in batch_results.items():
             for vuln in vulns:
@@ -304,29 +380,69 @@ def scan(
                 severity      = _get_severity(vuln)
                 fixed_version = extract_fixed_version(vuln)
 
+                # Policy suppression
                 is_suppressed, reason = policy.is_ignored(cve_id, name)
                 if is_suppressed:
                     ignored_count += 1
+                    log.debug("Suppressed %s for %s==%s: %s", cve_id, name, version, reason)
                     continue
 
+                # Minimum severity filter
+                sev_idx = _SEVERITY_LEVELS.index(severity) if severity in _SEVERITY_LEVELS else 4
+                if sev_idx < min_sev_idx:
+                    filtered_sev_count += 1
+                    continue
+
+                # Reachability check
                 if have_graph:
-                    status, call_path = check_reachability_details(call_graph, entry_points, vuln)
+                    status, call_path = check_reachability_details(
+                        call_graph, entry_points, vuln,
+                        import_scanner=import_scanner, package_name=name,
+                    )
+                elif import_scanner:
+                    # No call graph but have import scanner — use it as sole signal
+                    status, call_path = check_reachability_details(
+                        {}, [], vuln,
+                        import_scanner=import_scanner, package_name=name,
+                    )
                 else:
                     status, call_path = ReachabilityStatus.UNKNOWN, None
 
+                # --only-reachable filter
+                if only_reachable and status != ReachabilityStatus.REACHABLE:
+                    continue
+
                 findings.append((name, version, cve_id, summary, status, severity, call_path, fixed_version))
+                log.debug("Finding: %s==%s %s [%s][%s]", name, version, cve_id, severity, status.value)
 
-    if ignored_count > 0:
-        console.print(f"[dim]Policy suppression:[/dim] [yellow]{ignored_count} vulnerability rule(s) ignored by policy.[/yellow]\n")
+    # ── Cache stats ──────────────────────────────────────────────────────────
+    if cache and verbose:
+        stats = cache.stats()
+        console.print(
+            f"[dim]Cache: {stats['hits']} hits / {stats['misses']} misses "
+            f"({stats['hit_rate']:.0%} hit rate)[/dim]\n"
+        )
 
-    # 4. Sort: REACHABLE first, UNKNOWN second, UNREACHABLE last ----------
-    findings.sort(key=lambda row: _RANK[row[4]])
+    if ignored_count:
+        console.print(
+            f"[dim]Policy suppression:[/dim] [yellow]{ignored_count} "
+            "vulnerability rule(s) ignored by policy.[/yellow]\n"
+        )
+    if filtered_sev_count:
+        console.print(
+            f"[dim]Severity filter:[/dim] {filtered_sev_count} finding(s) below "
+            f"--min-severity threshold hidden.\n"
+        )
+
+    # ── Sort: REACHABLE first, then by severity ───────────────────────────────
+    findings.sort(key=lambda row: (
+        _RANK[row[4]],
+        _SEVERITY_ORDER.get(row[5], 4),
+    ))
     return findings
 
 
-# ---------------------------------------------------------------------------
-# Rich report (B5: severity column)
-# ---------------------------------------------------------------------------
+# ── Rich report ───────────────────────────────────────────────────────────────
 
 def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
     """Render findings as a colour-coded Rich table."""
@@ -345,19 +461,18 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
     for name, version, cve_id, summary, status, severity, call_path, fixed_version in findings:
         sev_text = _SEVERITY_STYLE.get(severity, severity)
 
-        # If REACHABLE and call path exists, append call chain trace to summary
         display_summary = summary
         if status == ReachabilityStatus.REACHABLE and call_path:
-            # Format path neatly: e.g. "cli.py::main -> Flask.run -> safe_join"
-            short_nodes = []
-            for node in call_path:
-                short_nodes.append(node.rsplit(".", 1)[-1] if "." in node else node)
-            chain_str = " -> ".join(short_nodes)
-            display_summary += f"\n[dim red]--> Path: {chain_str}[/dim red]"
+            short_nodes = [
+                node.rsplit(".", 1)[-1] if "." in node else node
+                for node in call_path
+            ]
+            display_summary += f"\n[dim red]--> Path: {' -> '.join(short_nodes)}[/dim red]"
 
-        # Append remediation patch suggestion if requested or fixed_version available
         if suggest_fixes and fixed_version:
-            display_summary += f"\n[bold green]--> Fix: pip install {name}>={fixed_version}[/bold green]"
+            display_summary += (
+                f"\n[bold green]--> Fix: pip install {name}>={fixed_version}[/bold green]"
+            )
 
         table.add_row(
             f"{name}=={version}",
@@ -369,9 +484,9 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
 
     console.print(table)
 
-    reachable_n   = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
-    unknown_n     = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.UNKNOWN)
-    unreachable_n = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.UNREACHABLE)
+    reachable_n   = sum(1 for *_, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
+    unknown_n     = sum(1 for *_, s, _, _, _ in findings if s == ReachabilityStatus.UNKNOWN)
+    unreachable_n = sum(1 for *_, s, _, _, _ in findings if s == ReachabilityStatus.UNREACHABLE)
     critical_n    = sum(1 for _, _, _, _, _, sev, _, _ in findings if sev == "CRITICAL")
 
     console.print(
@@ -390,9 +505,7 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# JSON output (B3)
-# ---------------------------------------------------------------------------
+# ── JSON output ───────────────────────────────────────────────────────────────
 
 def write_json_output(findings: list[Finding], path: str) -> None:
     """Write findings as structured JSON to *path*."""
@@ -411,28 +524,27 @@ def write_json_output(findings: list[Finding], path: str) -> None:
         for name, version, cve_id, summary, status, severity, call_path, fixed_version in findings
     ]
     out = {
-        "total":       len(findings),
-        "reachable":   sum(1 for r in records if r["status"] == "REACHABLE"),
-        "unknown":     sum(1 for r in records if r["status"] == "UNKNOWN"),
-        "unreachable": sum(1 for r in records if r["status"] == "UNREACHABLE"),
-        "findings":    records,
+        "reachguard_version": __version__,
+        "total":              len(findings),
+        "reachable":          sum(1 for r in records if r["status"] == "REACHABLE"),
+        "unknown":            sum(1 for r in records if r["status"] == "UNKNOWN"),
+        "unreachable":        sum(1 for r in records if r["status"] == "UNREACHABLE"),
+        "findings":           records,
     }
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(out, fh, indent=2)
-    console.print(f"\n[dim]JSON report written to:[/dim] [cyan]{path}[/cyan]")
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(out, fh, indent=2)
+        console.print(f"\n[dim]JSON report written to:[/dim] [cyan]{path}[/cyan]")
+    except OSError as exc:
+        console.print(f"[bold red]Error writing JSON output:[/bold red] {exc}")
+        log.error("Failed to write JSON output to %s: %s", path, exc)
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _version_callback(value: bool) -> None:
     if value:
-        try:
-            ver = importlib.metadata.version("reachguard")
-        except importlib.metadata.PackageNotFoundError:
-            from reachguard_core import __version__ as ver  # type: ignore[assignment]
-        console.print(f"ReachGuard [bold cyan]{ver}[/bold cyan]")
+        console.print(f"ReachGuard [bold cyan]{__version__}[/bold cyan]")
         raise typer.Exit()
 
 
@@ -445,7 +557,7 @@ def main_cmd(
     src: str = typer.Option(
         None,
         "--src", "-s",
-        help="Source directory. PyCG call graph is built automatically if --call-graph not given.",
+        help="Source directory. PyCG call graph and import scanner run automatically.",
     ),
     call_graph: str = typer.Option(
         None,
@@ -455,37 +567,92 @@ def main_cmd(
     output_json: str = typer.Option(
         None,
         "--output-json", "-o",
-        help="Write findings as JSON to this file (for CI integration).",
+        help="Write findings as JSON to this file.",
     ),
     fail_on_reachable: bool = typer.Option(
         False,
         "--fail-on-reachable",
-        help="Exit with code 1 if any REACHABLE CVEs are found (useful in CI).",
+        help="Exit code 1 if any REACHABLE CVEs found (useful in CI).",
+    ),
+    exit_code_mode: str = typer.Option(
+        "reachable",
+        "--exit-code",
+        help="Exit code strategy: 'none' (always 0), 'any' (1 on any CVE), 'reachable' (1 on REACHABLE only).",
     ),
     suggest_fixes: bool = typer.Option(
         False,
         "--suggest-fixes",
-        help="Display recommended pip upgrade patch commands for vulnerabilities.",
+        help="Display recommended pip upgrade commands for vulnerabilities.",
     ),
     output_sarif: str = typer.Option(
         None,
         "--output-sarif",
-        help="Write findings in SARIF v2.1.0 format (for GitHub Security Code Scanning tab).",
+        help="Write findings in SARIF v2.1.0 format (GitHub Code Scanning).",
     ),
     output_html: str = typer.Option(
         None,
         "--output-html",
-        help="Write an interactive HTML dashboard report to this file.",
+        help="Write an interactive HTML dashboard report.",
     ),
     output_sbom: str = typer.Option(
         None,
         "--output-sbom",
-        help="Write findings as CycloneDX v1.5 JSON SBOM to this file.",
+        help="Write CycloneDX v1.5 JSON SBOM.",
     ),
     config: str = typer.Option(
         None,
         "--config", "-c",
-        help="Path to policy suppression config file (.reachguardignore / reachguard.toml).",
+        help="Policy suppression config file (.reachguardignore / reachguard.toml).",
+    ),
+    min_severity: str = typer.Option(
+        None,
+        "--min-severity",
+        help="Minimum severity to report: LOW, MEDIUM, HIGH, CRITICAL.",
+    ),
+    only_reachable: bool = typer.Option(
+        False,
+        "--only-reachable",
+        help="Show only REACHABLE findings (hides UNKNOWN and UNREACHABLE).",
+    ),
+    timeout: int = typer.Option(
+        10,
+        "--timeout",
+        help="OSV HTTP request timeout in seconds (default: 10).",
+    ),
+    max_workers: int = typer.Option(
+        10,
+        "--max-workers",
+        help="Max concurrent OSV HTTP worker threads (default: 10).",
+    ),
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="Disable disk-based OSV response cache.",
+    ),
+    cache_dir: str = typer.Option(
+        None,
+        "--cache-dir",
+        help="Custom cache directory path (default: ~/.cache/reachguard/).",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose", "-v",
+        help="Print debug info: raw API responses, cache stats, import scanner details.",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet", "-q",
+        help="Suppress all output except errors (CI-friendly).",
+    ),
+    log_file: str = typer.Option(
+        None,
+        "--log-file",
+        help="Write structured log output to this file.",
+    ),
+    log_format: str = typer.Option(
+        "plain",
+        "--log-format",
+        help="Log format: 'plain' (default) or 'json' (for SIEM/Splunk).",
     ),
     version: bool = typer.Option(
         False,
@@ -496,33 +663,104 @@ def main_cmd(
     ),
 ) -> None:
     """Scan dependencies for CVEs and rank by reachability."""
+    # ── Configure logging ────────────────────────────────────────────────────
+    configure_logging(
+        verbose=verbose,
+        quiet=quiet,
+        log_file=log_file,
+        log_format=log_format,
+    )
+
+    # ── Validate min_severity option ─────────────────────────────────────────
+    if min_severity and min_severity.upper() not in _SEVERITY_LEVELS:
+        console.print(
+            f"[bold red]Error:[/bold red] --min-severity must be one of "
+            f"{', '.join(_SEVERITY_LEVELS)}. Got: '{min_severity}'"
+        )
+        raise typer.Exit(code=2)
+
+    # ── CI mode: disable Rich markup if running in CI ─────────────────────────
+    ci_mode = os.environ.get("CI", "").lower() in {"true", "1", "yes"}
+    if ci_mode:
+        log.debug("CI mode detected — Rich markup suppressed in some outputs")
+
+    # ── Build OSV cache ───────────────────────────────────────────────────────
+    cache: OsvCache | None = None
+    if not no_cache:
+        cache = OsvCache(cache_dir=cache_dir, enabled=True)
+
     dep_file, _ = find_dependency_file(requirements_path)
     target_path_str = str(dep_file) if dep_file else (requirements_path or "requirements.txt")
 
-    findings = scan(requirements_path, src_path=src, call_graph_path=call_graph, config_path=config)
+    # ── Run scan ──────────────────────────────────────────────────────────────
+    try:
+        findings = scan(
+            requirements_path,
+            src_path=src,
+            call_graph_path=call_graph,
+            config_path=config,
+            min_severity=min_severity,
+            only_reachable=only_reachable,
+            timeout=timeout,
+            cache=cache,
+            max_workers=max_workers,
+            verbose=verbose,
+        )
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[bold red]ReachGuard error:[/bold red] {exc}")
+        log.error("Unhandled scan error: %s", exc, exc_info=verbose)
+        raise typer.Exit(code=2)
 
+    if not quiet:
+        if findings:
+            print_report(findings, suggest_fixes=suggest_fixes)
+        else:
+            console.print("[bold green]✓ No vulnerabilities found.[/bold green]")
+
+    # ── Output files ──────────────────────────────────────────────────────────
     if findings:
-        print_report(findings, suggest_fixes=suggest_fixes)
         if output_json:
             write_json_output(findings, output_json)
         if output_sarif:
-            write_sarif_output(findings, output_sarif, requirements_path=target_path_str)
-            console.print(f"\n[dim]SARIF report written to:[/dim] [cyan]{output_sarif}[/cyan]")
+            try:
+                write_sarif_output(findings, output_sarif, requirements_path=target_path_str)
+                if not quiet:
+                    console.print(f"\n[dim]SARIF report written to:[/dim] [cyan]{output_sarif}[/cyan]")
+            except OSError as exc:
+                console.print(f"[bold red]Error writing SARIF:[/bold red] {exc}")
         if output_html:
-            write_html_report(findings, output_html, requirements_path=target_path_str)
-            console.print(f"\n[dim]HTML report written to:[/dim] [cyan]{output_html}[/cyan]")
+            try:
+                write_html_report(findings, output_html, requirements_path=target_path_str)
+                if not quiet:
+                    console.print(f"\n[dim]HTML report written to:[/dim] [cyan]{output_html}[/cyan]")
+            except OSError as exc:
+                console.print(f"[bold red]Error writing HTML report:[/bold red] {exc}")
         if output_sbom:
-            deps = parse_deps(requirements_path)
-            write_sbom_output(findings, deps, output_sbom, requirements_path=target_path_str)
-            console.print(f"\n[dim]CycloneDX SBOM report written to:[/dim] [cyan]{output_sbom}[/cyan]")
-        if fail_on_reachable:
-            n = sum(1 for _, _, _, _, s, _, _, _ in findings if s == ReachabilityStatus.REACHABLE)
-            if n:
-                raise typer.Exit(code=1)
-    else:
-        console.print("[bold green]No vulnerabilities found.[/bold green]")
+            try:
+                deps = parse_deps(requirements_path)
+                write_sbom_output(findings, deps, output_sbom, requirements_path=target_path_str)
+                if not quiet:
+                    console.print(f"\n[dim]CycloneDX SBOM written to:[/dim] [cyan]{output_sbom}[/cyan]")
+            except OSError as exc:
+                console.print(f"[bold red]Error writing SBOM:[/bold red] {exc}")
+
+    # ── Exit code logic ───────────────────────────────────────────────────────
+    exit_mode = exit_code_mode.lower()
+    if fail_on_reachable:
+        exit_mode = "reachable"   # legacy flag takes effect
+
+    if exit_mode == "any" and findings:
+        raise typer.Exit(code=1)
+    elif exit_mode in ("reachable", ""):
+        n_reachable = sum(
+            1 for _, _, _, _, s, _, _, _ in findings
+            if s == ReachabilityStatus.REACHABLE
+        )
+        if n_reachable:
+            raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
     app()
-

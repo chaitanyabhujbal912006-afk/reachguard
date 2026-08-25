@@ -66,5 +66,12 @@
 - [x] Extend `entrypoints.py` AST walker for Django, Celery, Click, and Typer.
 - [x] Add CycloneDX v1.5 SBOM exporter (`--output-sbom`).
 - [x] Add Policy Suppression engine (`.reachguardignore` / `reachguard.toml`).
-- [ ] Add PR Git Diff scanning (`--diff main`).
-- [ ] Add EPSS score risk rating.
+- [x] Add PR Git Diff scanning (`--diff main`). — **Phase 4 target**
+- [x] Add EPSS score risk rating. — **Phase 4 target**
+- [x] Add disk-based OSV cache with TTL (`cache.py`).
+- [x] Add import-based pre-filter (`import_scanner.py`) to reduce false UNKNOWNs.
+- [x] Add structured logging (`logger.py`): `--verbose`, `--quiet`, `--log-file`, `--log-format`.
+- [x] Add `--min-severity`, `--only-reachable`, `--timeout`, `--max-workers`, `--exit-code` CLI flags.
+- [x] Dynamic version from `importlib.metadata`.
+- [x] GitHub Actions CI with matrix testing, coverage, and PyPI release.
+- [x] Version bumped to 1.0.0.

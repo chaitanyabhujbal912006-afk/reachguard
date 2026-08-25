@@ -36,6 +36,10 @@ import os
 import re
 from enum import Enum
 
+from reachguard_core.logger import get_logger
+
+log = get_logger(__name__)
+
 # OS path separator — used to identify user-code keys in PyCG output.
 _SEP = os.sep  # '\\' on Windows, '/' on POSIX
 
@@ -385,12 +389,32 @@ def check_reachability_details(
     call_graph: dict[str, list[str]],
     entry_points: list[str],
     vuln: dict,
+    import_scanner=None,
+    package_name: str | None = None,
 ) -> tuple[ReachabilityStatus, list[str] | None]:
     """High-level helper returning status and the call trace list if reachable.
+
+    Args:
+        call_graph:     PyCG call graph dict.
+        entry_points:   List of entry-point strings.
+        vuln:           OSV advisory dict.
+        import_scanner: Optional :class:`~reachguard_core.import_scanner.ImportScanner`
+            instance.  When provided and the package is not imported anywhere in
+            source files, returns ``UNREACHABLE`` immediately without BFS.
+        package_name:   PyPI package name (used with *import_scanner*).
 
     Returns:
         A tuple of ``(ReachabilityStatus, call_path_list_or_None)``.
     """
+    # Import-based pre-filter: if the package is never imported → UNREACHABLE
+    if import_scanner is not None and package_name:
+        if not import_scanner.is_imported(package_name):
+            log.debug(
+                "Import pre-filter: %s not imported in source → UNREACHABLE",
+                package_name,
+            )
+            return ReachabilityStatus.UNREACHABLE, None
+
     targets = extract_vulnerable_functions(vuln)
 
     if not targets:
@@ -408,7 +432,12 @@ def check_reachability(
     call_graph: dict[str, list[str]],
     entry_points: list[str],
     vuln: dict,
+    import_scanner=None,
+    package_name: str | None = None,
 ) -> ReachabilityStatus:
     """High-level helper that combines extraction and reachability check."""
-    status, _ = check_reachability_details(call_graph, entry_points, vuln)
+    status, _ = check_reachability_details(
+        call_graph, entry_points, vuln,
+        import_scanner=import_scanner, package_name=package_name,
+    )
     return status

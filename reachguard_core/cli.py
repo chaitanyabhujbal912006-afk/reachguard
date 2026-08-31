@@ -528,6 +528,24 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
     unreachable_n = sum(1 for *_, s, _, _, _ in findings if s == ReachabilityStatus.UNREACHABLE)
     critical_n    = sum(1 for _, _, _, _, _, sev, _, _ in findings if sev == "CRITICAL")
 
+    summary_text = Text()
+    summary_text.append("🚨 Reachable: ", style="bold red")
+    summary_text.append(f"{reachable_n}  │  ", style="bold red")
+    summary_text.append("❓ Unknown: ", style="bold yellow")
+    summary_text.append(f"{unknown_n}  │  ", style="bold yellow")
+    summary_text.append("🛡️ Unreachable: ", style="bold green")
+    summary_text.append(f"{unreachable_n}  │  ", style="bold green")
+    summary_text.append("Critical: ", style="bold red")
+    summary_text.append(f"{critical_n}", style="bold red")
+
+    summary_panel = Panel(
+        Align.center(summary_text),
+        title=f"[bold]Scan Results Summary ({len(findings)} CVEs Total)[/bold]",
+        border_style="red" if reachable_n else ("yellow" if unknown_n else "green"),
+        padding=(0, 2),
+    )
+    console.print(summary_panel)
+
     console.print(
         f"\n[bold]Summary:[/bold]  "
         f"[bold red]{reachable_n} reachable[/bold red]  |  "
@@ -542,6 +560,7 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
             "\n[bold red]! Action required:[/bold red] "
             f"{reachable_n} CVE(s) are reachable from your code -- patch or mitigate these first."
         )
+
 
 
 # ── JSON output ───────────────────────────────────────────────────────────────

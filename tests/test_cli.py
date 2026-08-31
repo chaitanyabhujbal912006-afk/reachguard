@@ -91,3 +91,18 @@ def test_cli_invalid_severity():
     result = runner.invoke(app, ["--min-severity", "INVALID_SEV"])
     assert result.exit_code == 2
     assert "Error:" in result.output
+
+
+def test_print_banner_rendering():
+    from reachguard_core.cli import print_banner
+    # Ensure print_banner executes without error
+    print_banner()
+
+
+def test_cli_quiet_suppresses_banner(tmp_path: Path):
+    req_file = tmp_path / "requirements.txt"
+    req_file.write_text("urllib3==1.26.5\n", encoding="utf-8")
+    result = runner.invoke(app, [str(req_file), "--quiet", "--no-cache"])
+    assert "🛡️ ReachGuard Security" not in result.output
+
+

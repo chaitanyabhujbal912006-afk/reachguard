@@ -105,6 +105,11 @@ requirements.txt contains werkzeug==2.3.3 (CVE in parse_multipart):
 pip install reachguard
 ```
 
+### Run as Python Module
+```bash
+python -m reachguard_core --help
+```
+
 ### From Source
 ```bash
 git clone https://github.com/chaitanyabhujbal912006-afk/reachguard.git
@@ -120,6 +125,8 @@ pip install -e .
 ```bash
 reachguard
 ```
+*(Displays the interactive terminal ASCII banner, color-coded findings table, and reachability overview)*
+
 
 ### Scan a specific file or directory
 ```bash

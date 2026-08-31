@@ -20,7 +20,9 @@ from pathlib import Path
 
 import typer
 from rich import box
+from rich.align import Align
 from rich.console import Console
+from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
@@ -29,6 +31,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
 from reachguard_core import __version__
 from reachguard_core.cache import OsvCache
@@ -67,9 +70,9 @@ _RANK = {
 }
 
 _STATUS_RICH = {
-    ReachabilityStatus.REACHABLE:   "[bold red]REACHABLE[/bold red]",
-    ReachabilityStatus.UNKNOWN:     "[yellow]unknown[/yellow]",
-    ReachabilityStatus.UNREACHABLE: "[dim green]unreachable[/dim green]",
+    ReachabilityStatus.REACHABLE:   "[bold red]🚨 REACHABLE[/bold red]",
+    ReachabilityStatus.UNKNOWN:     "[yellow]❓ unknown[/yellow]",
+    ReachabilityStatus.UNREACHABLE: "[dim green]🛡️ unreachable[/dim green]",
 }
 
 _SEVERITY_STYLE = {
@@ -81,6 +84,34 @@ _SEVERITY_STYLE = {
 
 # Minimum severity enum for filtering
 _SEVERITY_LEVELS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+
+# ── Terminal Banner ───────────────────────────────────────────────────────────
+
+def print_banner() -> None:
+    """Render the official ReachGuard ASCII terminal header banner."""
+    ascii_art = (
+        "█▀█ █▀▀ █▀█ █▀▀ █  █ █▀█ █  █ █▀█ █▀█ █▀▄\n"
+        "█▀▄ █▀▀ █▀█ █  █ █▀█ █ █ █  █ █▀█ █▀▄ █▄▀\n"
+        "▀ ▀ ▀▀▀ ▀ ▀ ▀▀▀  ▀ ▀ ▀▀▀ ▀▀▀▀ ▀ ▀ ▀ ▀ ▀▀ "
+    )
+    banner_text = Text()
+    banner_text.append("🛡️  ", style="bold red")
+    banner_text.append("R E A C H G U A R D\n", style="bold cyan")
+    banner_text.append(ascii_art + "\n\n", style="bold blue")
+    banner_text.append("Refined. Secure. Connected.\n", style="bold white")
+    banner_text.append("Reachability-Aware Dependency Vulnerability Scanner  ", style="dim white")
+    banner_text.append(f"v{__version__}", style="bold cyan")
+
+    panel = Panel(
+        Align.center(banner_text),
+        border_style="bright_blue",
+        padding=(1, 3),
+        title="[bold cyan]🛡️ ReachGuard Security[/bold cyan]",
+        subtitle="[dim]https://github.com/chaitanyabhujbal912006-afk/reachguard[/dim]",
+    )
+    console.print(panel)
+
 
 
 # ── PyCG auto-detection ───────────────────────────────────────────────────────
@@ -688,6 +719,9 @@ def main_cmd(
         log_file=log_file,
         log_format=log_format,
     )
+
+    if not quiet:
+        print_banner()
 
     # ── Validate min_severity option ─────────────────────────────────────────
     if min_severity and min_severity.upper() not in _SEVERITY_LEVELS:

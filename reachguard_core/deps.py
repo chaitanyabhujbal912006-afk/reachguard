@@ -19,6 +19,32 @@ import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Compiled regex constants (compiled once at import time, not per line)
+# ---------------------------------------------------------------------------
+
+# Normalise package names per PEP 503
+_RE_NORMALISE = re.compile(r"[-_.]+")
+
+# requirements.txt: exact pin  pkg==1.2.3  (with optional extras)
+_RE_EXACT_PIN = re.compile(
+    r"^([A-Za-z0-9_\-\.]+(?:\[[A-Za-z0-9_,\-\.]+\])?)==([0-9A-Za-z\.\-]+)"
+)
+# requirements.txt: unpinned / range pin  pkg  |  pkg>=1.0
+_RE_UNPINNED = re.compile(
+    r"^([A-Za-z0-9_\-\.]+(?:\[[A-Za-z0-9_,\-\.]+\])?)"
+)
+# Extras bracket in a package name: pkg[extra]
+_RE_EXTRAS = re.compile(r"\[.*?\]")
+# Lower-bound version from a range specifier: pkg>=2.3.0
+_RE_RANGE_BOUND = re.compile(r"[>= ~^]=?\s*([0-9][0-9A-Za-z\.\-]*)")
+# PEP 508 exact pin inside pyproject: name[extras]==1.2
+_RE_PEP508_EXACT = re.compile(
+    r"^([A-Za-z0-9_\-\.]+)(?:\[.*?\])?==([0-9A-Za-z\.\-]+)"
+)
+# Pipfile.lock version string: ==1.2.3
+_RE_PIPFILE_VER = re.compile(r"==")
+
+# ---------------------------------------------------------------------------
 # Installed package resolver
 # ---------------------------------------------------------------------------
 
@@ -98,31 +124,25 @@ def parse_requirements(filepath: str, _visited: set[str] | None = None) -> list[
                 continue
 
             # Exact pin regex: pkg==1.2.3
-            match_exact = re.match(
-                r"^([A-Za-z0-9_\-\.]+(?:\[[A-Za-z0-9_,\-\.]+\])?)==([0-9A-Za-z\.\-]+)",
-                line,
-            )
+            match_exact = _RE_EXACT_PIN.match(line)
             if match_exact:
                 raw_pkg, version = match_exact.group(1), match_exact.group(2)
-                pkg = re.sub(r"\[.*?\]", "", raw_pkg)  # strip extras
+                pkg = _RE_EXTRAS.sub("", raw_pkg)  # strip extras
                 deps.append((_normalise_name(pkg), version))
                 continue
 
             # Range pins or unpinned specifier: pkg>=1.0, pkg~=1.0, pkg
-            match_unpinned = re.match(
-                r"^([A-Za-z0-9_\-\.]+(?:\[[A-Za-z0-9_,\-\.]+\])?)",
-                line,
-            )
+            match_unpinned = _RE_UNPINNED.match(line)
             if match_unpinned:
                 raw_pkg = match_unpinned.group(1)
-                pkg = re.sub(r"\[.*?\]", "", raw_pkg)
+                pkg = _RE_EXTRAS.sub("", raw_pkg)
                 norm_name = _normalise_name(pkg)
                 installed_ver = _resolve_installed_version(norm_name)
                 if installed_ver:
                     deps.append((norm_name, installed_ver))
                 else:
                     # Attempt to extract minimum range bound e.g. pkg>=2.3.0
-                    bound_match = re.search(r"[>=~^]=?\s*([0-9][0-9A-Za-z\.\-]*)", line)
+                    bound_match = _RE_RANGE_BOUND.search(line)
                     if bound_match:
                         deps.append((norm_name, bound_match.group(1)))
 
@@ -168,7 +188,7 @@ def parse_pyproject(filepath: str) -> list[tuple[str, str]]:
             continue
         norm_name = _normalise_name(pkg)
         ver_str = constraint if isinstance(constraint, str) else (constraint.get("version", "") if isinstance(constraint, dict) else "")
-        ver_match = re.search(r"([0-9][0-9A-Za-z\.\-]*)", ver_str)
+        ver_match = _RE_RANGE_BOUND.search(ver_str)
         if ver_match:
             installed = _resolve_installed_version(norm_name)
             deps.append((norm_name, installed or ver_match.group(1)))
@@ -192,9 +212,9 @@ def parse_pipfile_lock(filepath: str) -> list[tuple[str, str]]:
     for section in ("default", "develop"):
         for pkg, meta in data.get(section, {}).items():
             version_str = meta.get("version", "")
-            match = re.match(r"==(.*)", version_str)
+            match = _RE_PIPFILE_VER.match(version_str)
             if match:
-                deps.append((_normalise_name(pkg), match.group(1)))
+                deps.append((_normalise_name(pkg), version_str[2:]))
     return deps
 
 
@@ -350,21 +370,18 @@ def parse_deps(filepath: str | None = None) -> list[tuple[str, str]]:
 
 def _normalise_name(name: str) -> str:
     """Normalise a package name per PEP 503 (lowercase, hyphens)."""
-    return re.sub(r"[-_.]+", "-", name).lower()
+    return _RE_NORMALISE.sub("-", name).lower()
 
 
 def _parse_pep508_pin(spec: str) -> tuple[str, str] | None:
     """Extract (name, version) from a PEP 508 dependency string if pinned or range-specified."""
     spec = spec.split(";")[0].strip()
-    match_exact = re.match(
-        r"^([A-Za-z0-9_\-\.]+)(?:\[.*?\])?==([0-9A-Za-z\.\-]+)",
-        spec,
-    )
+    match_exact = _RE_PEP508_EXACT.match(spec)
     if match_exact:
         return (_normalise_name(match_exact.group(1)), match_exact.group(2))
 
     # Match name and optional range constraint
-    match_name = re.match(r"^([A-Za-z0-9_\-\.]+)", spec)
+    match_name = _RE_UNPINNED.match(spec)
     if match_name:
         pkg = match_name.group(1)
         norm = _normalise_name(pkg)
@@ -372,7 +389,7 @@ def _parse_pep508_pin(spec: str) -> tuple[str, str] | None:
         if installed:
             return (norm, installed)
         # Extract version number if present
-        ver_match = re.search(r"([0-9][0-9A-Za-z\.\-]*)", spec)
+        ver_match = _RE_RANGE_BOUND.search(spec)
         if ver_match:
             return (norm, ver_match.group(1))
 

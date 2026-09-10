@@ -1,5 +1,6 @@
 """OSV.dev API integration module with caching and retry logic."""
 
+import random
 import sys
 import time
 
@@ -44,7 +45,7 @@ def _query_with_retry(
                 )
                 if attempt < max_retries:
                     time.sleep(delay)
-                    delay *= 2
+                    delay = delay * 2 + random.uniform(0, 0.5)  # jitter
                     continue
                 # Final attempt failed
                 _warn(f"{package_name}=={version}: OSV HTTP error {response.status_code} after {max_retries} attempts")
@@ -60,7 +61,7 @@ def _query_with_retry(
             log.warning("OSV timeout for %s==%s (attempt %d/%d)", package_name, version, attempt, max_retries)
             if attempt < max_retries:
                 time.sleep(delay)
-                delay *= 2
+                delay = delay * 2 + random.uniform(0, 0.5)  # jitter
                 continue
             _warn(f"{package_name}=={version}: OSV request timed out after {timeout}s")
             return []
@@ -68,7 +69,7 @@ def _query_with_retry(
             log.warning("OSV connection error for %s==%s: %s", package_name, version, str(exc)[:80])
             if attempt < max_retries:
                 time.sleep(delay)
-                delay *= 2
+                delay = delay * 2 + random.uniform(0, 0.5)  # jitter
                 continue
             _warn(f"{package_name}=={version}: OSV connection error — {str(exc)[:80]}")
             return []
@@ -130,6 +131,9 @@ def query_cves_batch(
 ) -> dict[tuple[str, str], list[dict]]:
     """Query OSV.dev for multiple dependencies concurrently via ThreadPoolExecutor.
 
+    Cache hits are resolved before the executor starts — they never consume a
+    thread slot.  Only genuinely uncached deps are dispatched to worker threads.
+
     Args:
         deps:        List of ``(package_name, version)`` tuples.
         max_workers: Number of concurrent HTTP worker threads (default: 10).
@@ -146,18 +150,37 @@ def query_cves_batch(
     if not deps:
         return results
 
+    # ── Pre-filter: resolve cache hits without touching the thread pool ────
+    uncached: list[tuple[str, str]] = []
+    for name, ver in deps:
+        if cache is not None:
+            cached = cache.get(name, ver)
+            if cached is not None:
+                results[(name, ver)] = cached
+                if callback:
+                    callback()
+                continue
+        uncached.append((name, ver))
+
+    if not uncached:
+        return results
+
+    # ── Dispatch only uncached deps to the thread pool ─────────────────────
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_dep = {
-            executor.submit(query_cves, name, ver, timeout=timeout, cache=cache): (name, ver)
-            for name, ver in deps
+            executor.submit(_query_with_retry, name, ver, timeout=timeout): (name, ver)
+            for name, ver in uncached
         }
         for future in as_completed(future_to_dep):
             dep = future_to_dep[future]
             try:
-                results[dep] = future.result()
+                vulns = future.result()
             except Exception as exc:
                 log.error("Unexpected error querying OSV for %s==%s: %s", dep[0], dep[1], exc)
-                results[dep] = []
+                vulns = []
+            results[dep] = vulns
+            if cache is not None:
+                cache.set(dep[0], dep[1], vulns)
             if callback:
                 callback()
     return results

@@ -32,6 +32,7 @@ will never appear in a PyCG call graph.  Fix: ``_is_noise_target()`` drops
 them before they reach the BFS.
 """
 
+import functools
 import os
 import re
 from collections import deque
@@ -142,14 +143,8 @@ def _extract_names_from_text(text: str) -> list[str]:
         and not _is_noise_target(n)   # A3: drop stdlib/template names
     ]
 
-    # Deduplicate while preserving order.
-    seen: set[str] = set()
-    unique: list[str] = []
-    for n in filtered:
-        if n not in seen:
-            seen.add(n)
-            unique.append(n)
-    return unique
+    # Deduplicate while preserving insertion order.
+    return list(dict.fromkeys(filtered))
 
 
 def extract_vulnerable_functions(vuln: dict) -> list[str]:
@@ -185,14 +180,8 @@ def extract_vulnerable_functions(vuln: dict) -> list[str]:
             text = vuln.get(field, "") or ""
             functions.extend(_extract_names_from_text(text))
 
-    # Deduplicate.
-    seen: set[str] = set()
-    unique: list[str] = []
-    for f in functions:
-        if f not in seen:
-            seen.add(f)
-            unique.append(f)
-    return unique
+    # Deduplicate while preserving insertion order.
+    return list(dict.fromkeys(functions))
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +278,11 @@ def _seed_from_entry_points(
 # A2 helpers -- suffix-anchored target matching
 # ---------------------------------------------------------------------------
 
+@functools.lru_cache(maxsize=512)
 def _target_name_forms(target: str) -> frozenset[str]:
     """All matchable forms of an advisory target name.
+
+    Cached: the same target string is queried repeatedly across BFS traversals.
 
     >>> _target_name_forms('werkzeug.safe_join')
     frozenset({'werkzeug.safe_join', 'safe_join'})
@@ -303,8 +295,12 @@ def _target_name_forms(target: str) -> frozenset[str]:
     return frozenset(forms)
 
 
+@functools.lru_cache(maxsize=4096)
 def _cg_key_name_forms(key: str) -> frozenset[str]:
     """All suffix-anchored dotted forms of a PyCG key.
+
+    Cached: each call-graph key is tested against every advisory target during
+    BFS, so caching eliminates redundant frozenset construction.
 
     ``src\\flask\\app.Flask.safe_join`` produces::
 

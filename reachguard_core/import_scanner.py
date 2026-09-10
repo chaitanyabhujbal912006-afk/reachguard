@@ -15,6 +15,7 @@ Usage:
 import ast
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from reachguard_core.logger import get_logger
@@ -49,6 +50,12 @@ _IMPORT_TO_PKG: dict[str, str] = {
     "gi":        "pygobject",
 }
 
+# Directories that are never user source code — skip during os.walk.
+_SKIP_DIRS: frozenset[str] = frozenset({
+    "__pycache__", ".git", ".venv", "venv", "node_modules", ".tox",
+    "dist", "build", ".eggs",
+})
+
 
 def _map_import_to_pkg(import_name: str) -> str:
     """Convert an import name (top-level module) to a likely PyPI package name."""
@@ -72,36 +79,48 @@ class ImportScanner:
         if self._result is not None:
             return self._result
 
-        imported: set[str] = set()
-        files_scanned = 0
-
-        for root, _dirs, files in os.walk(self._src):
-            # Skip common non-project directories
-            _dirs[:] = [
-                d for d in _dirs
-                if d not in {"__pycache__", ".git", ".venv", "venv", "node_modules", ".tox"}
+        # ── Collect all .py file paths first ──────────────────────────────────
+        py_files: list[Path] = []
+        for root, dirs, files in os.walk(self._src):
+            dirs[:] = [
+                d for d in dirs
+                if d not in _SKIP_DIRS and not d.endswith((".egg-info", ".dist-info"))
             ]
             for filename in files:
-                if not filename.endswith(".py"):
-                    continue
-                filepath = Path(root) / filename
-                try:
-                    source = filepath.read_text(encoding="utf-8", errors="ignore")
-                    tree = ast.parse(source, filename=str(filepath))
-                    files_scanned += 1
-                except (SyntaxError, OSError) as exc:
-                    log.debug("Skipping %s: %s", filepath, exc)
-                    continue
+                if filename.endswith(".py"):
+                    py_files.append(Path(root) / filename)
 
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        for alias in node.names:
-                            imported.add(_map_import_to_pkg(alias.name))
-                    elif isinstance(node, ast.ImportFrom):
-                        if node.module:
-                            imported.add(_map_import_to_pkg(node.module))
+        # ── Parse files concurrently ──────────────────────────────────────────
+        imported: set[str] = set()
 
-        log.debug("ImportScanner: scanned %d files, found %d imported packages", files_scanned, len(imported))
+        def _parse_file(filepath: Path) -> set[str]:
+            """Parse a single file and return its imported package names."""
+            try:
+                source = filepath.read_text(encoding="utf-8", errors="ignore")
+                tree = ast.parse(source, filename=str(filepath))
+            except (SyntaxError, OSError) as exc:
+                log.debug("Skipping %s: %s", filepath, exc)
+                return set()
+            names: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        names.add(_map_import_to_pkg(alias.name))
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        names.add(_map_import_to_pkg(node.module))
+            return names
+
+        workers = min(32, max(1, len(py_files)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_parse_file, fp): fp for fp in py_files}
+            for future in as_completed(futures):
+                imported |= future.result()
+
+        log.debug(
+            "ImportScanner: scanned %d files, found %d imported packages",
+            len(py_files), len(imported),
+        )
         self._result = imported
         return imported
 

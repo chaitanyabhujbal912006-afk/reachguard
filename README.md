@@ -20,6 +20,12 @@
 
 ---
 
+<p align="center">
+  <img src="assets/reachguard_terminal_scan.png" alt="ReachGuard Terminal Scan" width="850" />
+</p>
+
+---
+
 ## 🎯 The Problem
 
 Traditional dependency security tools (**Dependabot**, **Snyk**, **Safety**) flag hundreds of vulnerabilities simply because a package version is listed in `requirements.txt`. However, in real-world applications:
@@ -95,6 +101,13 @@ requirements.txt contains werkzeug==2.3.3 (CVE in parse_multipart):
 | ⚡ **PR Diff Scanning** | `--diff main` scans only code modified in a Pull Request |
 | 📋 **Policy Engine** | `.reachguardignore` / `reachguard.toml` to suppress false positives |
 | 🔧 **Auto-Remediation** | `--suggest-fixes` shows exact `pip install pkg>=fixed_version` commands |
+
+### 📊 Interactive Offline HTML Dashboard
+ReachGuard generates self-contained, air-gapped HTML dashboard reports with zero CDN dependencies:
+
+<p align="center">
+  <img src="assets/reachguard_html_dashboard.png" alt="ReachGuard HTML Dashboard" width="850" />
+</p>
 
 ---
 

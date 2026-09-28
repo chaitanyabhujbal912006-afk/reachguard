@@ -17,6 +17,7 @@ venv.bak/
 callgraph.json
 *.log
 /tmp/
+*.html
 
 # IDE / OS
 .vscode/

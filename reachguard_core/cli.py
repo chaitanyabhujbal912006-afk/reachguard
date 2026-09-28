@@ -23,6 +23,18 @@ from rich import box
 from rich.align import Align
 from rich.console import Console
 from rich.panel import Panel
+
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 from rich.progress import (
     BarColumn,
     Progress,

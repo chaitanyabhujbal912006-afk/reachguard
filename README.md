@@ -100,10 +100,19 @@ requirements.txt contains werkzeug==2.3.3 (CVE in parse_multipart):
 
 ## ⚙️ Installation
 
-### Via PyPI (Recommended)
+### Option 1 — Base install (recommended for most users)
 ```bash
 pip install reachguard
 ```
+Gives you **import-level filtering** — packages never imported in your source are instantly marked `UNREACHABLE`. No extra dependencies required.
+
+### Option 2 — With full call-graph reachability
+```bash
+pip install 'reachguard[callgraph]'
+```
+Adds **PyCG** for deep, function-level reachability analysis. Enables the most precise `REACHABLE` / `UNREACHABLE` classification via BFS call-graph traversal.
+
+> 💡 Not sure which to use? Start with Option 1. If you want the most precise results and your codebase works with PyCG, upgrade to Option 2.
 
 ### Run as Python Module
 ```bash
@@ -114,7 +123,8 @@ python -m reachguard_core --help
 ```bash
 git clone https://github.com/chaitanyabhujbal912006-afk/reachguard.git
 cd reachguard
-pip install -e .
+pip install -e .                         # base
+pip install -e '.[callgraph]'            # with call-graph support
 ```
 
 ---

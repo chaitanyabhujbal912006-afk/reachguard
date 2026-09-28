@@ -491,8 +491,21 @@ def scan(
 
 # ── Rich report ───────────────────────────────────────────────────────────────
 
-def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
-    """Render findings as a colour-coded Rich table."""
+def print_report(
+    findings: list[Finding],
+    suggest_fixes: bool = False,
+    epss_map: dict[str, float] | None = None,
+) -> None:
+    """Render findings as a colour-coded Rich table.
+
+    Args:
+        findings:     List of Finding tuples from scan().
+        suggest_fixes: If True, append pip upgrade commands.
+        epss_map:     Optional dict mapping CVE ID → EPSS score (0–1).
+                      When provided, a Risk column is added to the table.
+    """
+    show_epss = bool(epss_map)
+
     table = Table(
         title="ReachGuard Scan Results",
         box=box.ROUNDED,
@@ -503,6 +516,8 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
     table.add_column("CVE / ID",  style="bold",  no_wrap=True, min_width=18)
     table.add_column("Severity",  no_wrap=True,  min_width=8)
     table.add_column("Status",    no_wrap=True,  min_width=16)
+    if show_epss:
+        table.add_column("Risk", no_wrap=True, min_width=10)
     table.add_column("Summary",   style="white")
 
     for name, version, cve_id, summary, status, severity, call_path, fixed_version in findings:
@@ -521,13 +536,27 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
                 f"\n[bold green]--> Fix: pip install {name}>={fixed_version}[/bold green]"
             )
 
-        table.add_row(
+        row: list[str] = [
             f"{name}=={version}",
             cve_id,
             sev_text,
             _STATUS_RICH[status],
-            display_summary,
-        )
+        ]
+
+        if show_epss:
+            e_score = epss_map.get(cve_id, 0.0)  # type: ignore[union-attr]
+            r_score = calculate_risk_score(status, severity, e_score)
+            # Colour the risk score by magnitude
+            if r_score >= 0.6:
+                risk_cell = f"[bold red]{r_score:.2f} 🔥[/bold red]\n[dim]epss={e_score:.3f}[/dim]"
+            elif r_score >= 0.3:
+                risk_cell = f"[yellow]{r_score:.2f}[/yellow]\n[dim]epss={e_score:.3f}[/dim]"
+            else:
+                risk_cell = f"[dim]{r_score:.2f}[/dim]\n[dim]epss={e_score:.3f}[/dim]"
+            row.append(risk_cell)
+
+        row.append(display_summary)
+        table.add_row(*row)
 
     console.print(table)
 
@@ -573,10 +602,17 @@ def print_report(findings: list[Finding], suggest_fixes: bool = False) -> None:
 
 # ── JSON output ───────────────────────────────────────────────────────────────
 
-def write_json_output(findings: list[Finding], path: str) -> None:
+def write_json_output(
+    findings: list[Finding],
+    path: str,
+    epss_map: dict[str, float] | None = None,
+) -> None:
     """Write findings as structured JSON to *path*."""
-    records = [
-        {
+    records = []
+    for name, version, cve_id, summary, status, severity, call_path, fixed_version in findings:
+        e_score = (epss_map or {}).get(cve_id)
+        r_score = calculate_risk_score(status, severity, e_score or 0.0) if e_score is not None else None
+        records.append({
             "package":       name,
             "version":       version,
             "cve_id":        cve_id,
@@ -586,9 +622,9 @@ def write_json_output(findings: list[Finding], path: str) -> None:
             "call_path":     call_path,
             "fixed_version": fixed_version,
             "suggested_fix": f"pip install {name}>={fixed_version}" if fixed_version else None,
-        }
-        for name, version, cve_id, summary, status, severity, call_path, fixed_version in findings
-    ]
+            "epss_score":    round(e_score, 4) if e_score is not None else None,
+            "risk_score":    r_score,
+        })
     out = {
         "reachguard_version": __version__,
         "total":              len(findings),
@@ -793,17 +829,14 @@ def main_cmd(
             findings = diff_scanner.filter_findings_by_diff(findings)
 
         # ── EPSS exploit probability scores (--epss) ──────────────────────────
+        epss_map: dict[str, float] = {}
         if epss and findings:
             cve_ids = [row[2] for row in findings]
             epss_map = fetch_epss_scores(cve_ids)
             if epss_map:
                 console.print(f"[blue]EPSS scores loaded:[/blue] {len(epss_map)} CVE(s) rated\n")
-                # Append EPSS risk score to findings in verbose/terminal output
-                for i, row in enumerate(findings):
-                    cve = row[2]
-                    e_score = epss_map.get(cve, 0.0)
-                    r_score = calculate_risk_score(row[4], row[5], e_score)
-                    log.debug("EPSS score for %s: epss=%.4f, composite_risk=%.3f", cve, e_score, r_score)
+            else:
+                console.print("[yellow]EPSS: no scores returned (CVEs may be non-standard IDs).[/yellow]\n")
 
     except typer.Exit:
         raise
@@ -814,14 +847,14 @@ def main_cmd(
 
     if not quiet:
         if findings:
-            print_report(findings, suggest_fixes=suggest_fixes)
+            print_report(findings, suggest_fixes=suggest_fixes, epss_map=epss_map or None)
         else:
             console.print("[bold green]✓ No vulnerabilities found.[/bold green]")
 
     # ── Output files ──────────────────────────────────────────────────────────
     if findings:
         if output_json:
-            write_json_output(findings, output_json)
+            write_json_output(findings, output_json, epss_map=epss_map or None)
         if output_sarif:
             try:
                 write_sarif_output(findings, output_sarif, requirements_path=target_path_str)

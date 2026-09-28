@@ -168,7 +168,12 @@ def _build_call_graph(src_path: str) -> dict:
     """
     pycg_cmd = _find_pycg_cmd(src_path)
     if not pycg_cmd:
-        console.print("[yellow]PyCG not found — install with: pip install pycg[/yellow]")
+        console.print(
+            "[yellow]⚠  PyCG not found — call graph reachability disabled.[/yellow]\n"
+            "[dim]   To enable deep REACHABLE detection, install it with:[/dim]\n"
+            "[dim]   pip install 'reachguard[callgraph]'  (or: pip install pycg)[/dim]\n"
+            "[dim]   Import-based filtering is still active (UNREACHABLE detection works).[/dim]\n"
+        )
         log.warning("PyCG not found — call graph unavailable.")
         return {}
 
@@ -196,7 +201,10 @@ def _build_call_graph(src_path: str) -> dict:
             log.warning("PyCG output unreadable: %s", parse_exc)
             return {}
     except FileNotFoundError:
-        console.print("[yellow]PyCG not found — install with: pip install pycg[/yellow]")
+        console.print(
+            "[yellow]⚠  PyCG not found — call graph reachability disabled.[/yellow]\n"
+            "[dim]   pip install 'reachguard[callgraph]'  (or: pip install pycg)[/dim]\n"
+        )
         return {}
     except subprocess.TimeoutExpired:
         console.print("[yellow]PyCG timed out after 120 s — skipping call graph.[/yellow]")
